@@ -849,13 +849,21 @@ struct MetricsTests {
                "high-resolution wheels keep their fractional ticks when the integer field truncates to zero")
         expect(SmoothScrollSupport.ticks(line: -2, fixedPoint: 0) == -2,
                "a zero fixed-point field falls back to the integer line delta")
-        expect(SmoothScrollSupport.remaining(afterTicks: 1, step: 40, current: 0) == 40,
-               "one wheel tick queues one step of glide")
-        expect(SmoothScrollSupport.remaining(afterTicks: 2, step: 40, current: 30) == 110,
+        expect(abs(SmoothScrollSupport.impulse(delta: 1, step: 34, speed: 2.7) - 91.8) < 0.000001,
+               "a weak notch is raised to the step then stretched by speed")
+        expect(SmoothScrollSupport.impulse(delta: 40, step: 34, speed: 2.7) == 108,
+               "a larger continuous reading keeps its own magnitude before speed")
+        expect(abs(SmoothScrollSupport.impulse(delta: -1, step: 34, speed: 2.7) + 91.8) < 0.000001,
+               "direction survives the impulse conversion")
+        expect(SmoothScrollSupport.impulse(delta: 0, step: 34, speed: 2.7) == 0,
+               "an empty reading asks for no distance")
+        expect(abs(SmoothScrollSupport.remaining(afterImpulse: 91.8, current: 0) - 91.8) < 0.000001,
+               "one wheel tick queues its impulse")
+        expect(SmoothScrollSupport.remaining(afterImpulse: 50, current: 30) == 80,
                "same-direction ticks add to what is left")
-        expect(SmoothScrollSupport.remaining(afterTicks: -1, step: 40, current: 100) == -40,
+        expect(SmoothScrollSupport.remaining(afterImpulse: -40, current: 100) == -40,
                "reversing direction abandons the leftover instead of fighting it")
-        expect(SmoothScrollSupport.remaining(afterTicks: 0, step: 40, current: 25) == 25,
+        expect(SmoothScrollSupport.remaining(afterImpulse: 0, current: 25) == 25,
                "a tickless event leaves the glide untouched")
         // Measured against a scroll view: a one-line tick with Shift moves the
         // content the same way a horizontal delta of the SAME sign does, so
@@ -872,71 +880,73 @@ struct MetricsTests {
         expect(SmoothScrollSupport.axes(vertical: 2, horizontal: -1, shiftPressed: true)
                == SmoothScrollSupport.Axes(vertical: 2, horizontal: -1),
                "Shift preserves a wheel event that already carries horizontal movement")
-        expect(SmoothScrollSupport.frameDelta(remaining: 100) == 18,
+        expect(SmoothScrollSupport.transition(forDuration: 4.35) == 0.085,
+               "the default duration maps to a soft lerp factor")
+        expect(SmoothScrollSupport.transition(forDuration: 1.0) == 0.561,
+               "a short duration maps to a snappy lerp factor")
+        expect(SmoothScrollSupport.frameDelta(remaining: 100, transition: 0.18) == 18,
                "a frame emits its fraction of the remaining distance")
-        expect(SmoothScrollSupport.frameDelta(remaining: -100) == -18,
+        expect(SmoothScrollSupport.frameDelta(remaining: -100, transition: 0.18) == -18,
                "negative glides emit negative frames")
-        expect(SmoothScrollSupport.frameDelta(remaining: 0.8) == 0.8,
+        expect(SmoothScrollSupport.frameDelta(remaining: 0.8, transition: 0.18) == 0.8,
                "small leftovers flush in one final frame")
-        expect(SmoothScrollSupport.frameDelta(remaining: 3) == 1,
-               "the glide never stalls below one pixel per frame")
-        expect(SmoothScrollSupport.frameDelta(remaining: 0) == 0,
+        expect(SmoothScrollSupport.frameDelta(remaining: 0, transition: 0.18) == 0,
                "no remaining distance emits nothing")
-        expect(SmoothScrollSupport.sanitizedStep(0) == 40,
+        expect(SmoothScrollSupport.hasLanded(remaining: 0.5, frame: 0.5),
+               "a residual inside the dead zone has landed")
+        expect(!SmoothScrollSupport.hasLanded(remaining: 10, frame: 0.85),
+               "a larger residual keeps the glide alive")
+        expect(SmoothScrollSupport.sanitizedStep(0) == 34,
                "an unset step falls back to the default")
         expect(SmoothScrollSupport.sanitizedStep(500) == 100,
                "the step clamps to its range")
+        expect(SmoothScrollSupport.sanitizedSpeed(0) == 2.7,
+               "an unset speed falls back to the default")
+        expect(SmoothScrollSupport.sanitizedSpeed(99) == 10,
+               "the speed clamps to its range")
+        expect(SmoothScrollSupport.sanitizedDuration(0) == 4.35,
+               "an unset duration falls back to the default")
+        expect(SmoothScrollSupport.sanitizedDuration(9) == 5,
+               "the duration clamps to its range")
         expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollEnabled] as? Bool == false,
                "smooth scrolling ships off by default")
         expect(Defaults.registeredDefaults[DefaultsKey.scrollInverterHorizontalEnabled] as? Bool == false,
                "horizontal scroll inversion ships off by default")
         expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.scrollInverterHorizontalEnabled),
                "horizontal scroll direction follows settings backups")
-        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollStep] as? Int == 40,
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollStep] as? Int == 34,
                "smooth scrolling step registers its default")
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollSpeed] as? Double == 2.7,
+               "smooth scrolling speed registers its default")
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollDuration] as? Double == 4.35,
+               "smooth scrolling duration registers its default")
 
         // A wheel that reports continuously already measures in points, and
         // that field is the one to trust; the line field only fills in for a
         // movement too small to register as a whole point.
         expect(ScrollWheelSupport.pointsPerLine == 10,
                "one scroll line spans ten points")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 4.0, pointDelta: 40, step: 40) == 40,
-               "the default step travels the same distance the event asked for")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 4.0, pointDelta: 12, step: 40) == 12,
+        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 4.0, pointDelta: 40) == 40,
                "the point field wins, so no assumption about points per line is made")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 4.0, pointDelta: 40, step: 20) == 20,
-               "a shorter step halves the distance of a continuous wheel")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 4.0, pointDelta: 40, step: 100) == 100,
-               "a longer step stretches the distance of a continuous wheel")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: -0.5, pointDelta: -5, step: 40) == -5,
-               "direction survives the conversion")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 0.35, pointDelta: 0, step: 40) == 3.5,
+        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 0.35, pointDelta: 0) == 3.5,
                "a movement below one whole point still glides")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 0, pointDelta: 12, step: 40) == 12,
+        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 0, pointDelta: 12) == 12,
                "a driver that fills in only whole points still glides")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 0, pointDelta: 0, step: 40) == 0,
+        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 0, pointDelta: 0) == 0,
                "an empty event asks for no distance")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: .nan, pointDelta: 0, step: 40) == 0,
+        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: .nan, pointDelta: 0) == 0,
                "a nonsense delta asks for no distance")
-
-        // The continuous path scales by the step itself and then hands the
-        // budget a step of one. Scaling in both places would square the
-        // setting, so pin that the budget equals the distance.
-        for continuousStep in [20.0, 40.0, 100.0] {
-            let distance = SmoothScrollSupport.continuousDistance(
-                fixedPointDelta: 4.0, pointDelta: 40, step: continuousStep)
-            expect(SmoothScrollSupport.remaining(afterTicks: distance, step: 1, current: 0) == distance,
-                   "the step scales a continuous wheel exactly once")
-        }
+        expect(SmoothScrollSupport.continuousImpulse(
+            fixedPointDelta: 4.0, pointDelta: 40, step: 34, speed: 2.7) == 108,
+               "a continuous wheel is stretched by speed once")
+        expect(SmoothScrollSupport.continuousImpulse(
+            fixedPointDelta: -0.5, pointDelta: -5, step: 34, speed: 1.0) == -34,
+               "a short continuous reading is raised to the step floor")
+        expect(SmoothScrollSupport.remaining(
+            afterImpulse: SmoothScrollSupport.continuousImpulse(
+                fixedPointDelta: 4.0, pointDelta: 40, step: 34, speed: 2.7),
+            current: 0) == 108,
+               "the continuous impulse lands in the budget exactly once")
 
         // Fractions are carried instead of rounded away, so the glide
         // delivers the whole distance it was given.

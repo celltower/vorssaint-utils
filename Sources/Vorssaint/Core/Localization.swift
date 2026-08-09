@@ -268,6 +268,8 @@ struct Strings {
     let smoothScrollName: String
     let smoothScrollCaption: String
     let smoothScrollStepLabel: String
+    let smoothScrollSpeedLabel: String
+    let smoothScrollDurationLabel: String
     let mouseNavigationSection: String
     let mouseNavigationEnable: String
     let mouseNavigationCaption: String
@@ -1196,8 +1198,10 @@ extension Strings {
         scrollActiveNow: "Invertendo a rolagem do mouse agora",
         mouseNavigationActiveNow: "Botões laterais ativos agora",
         smoothScrollName: "Rolagem suave",
-        smoothScrollCaption: "Transforma cada passo da rodinha do mouse em um deslize curto e macio. O trackpad não muda.",
+        smoothScrollCaption: "Transforma cada passo da rodinha do mouse em um deslize longo e macio, com passo, velocidade e duração ajustáveis. O trackpad não muda.",
         smoothScrollStepLabel: "Distância por passo",
+        smoothScrollSpeedLabel: "Velocidade",
+        smoothScrollDurationLabel: "Duração",
         mouseNavigationSection: "Navegação",
         mouseNavigationEnable: "Usar botões laterais para voltar e avançar",
         mouseNavigationCaption: "Converte os botões Voltar e Avançar do mouse em comandos de navegação no Finder, navegadores e apps compatíveis.",
@@ -2098,8 +2102,10 @@ extension Strings {
         scrollActiveNow: "Inverting mouse scrolling right now",
         mouseNavigationActiveNow: "Side buttons active right now",
         smoothScrollName: "Smooth scrolling",
-        smoothScrollCaption: "Turns each mouse wheel step into a short, gentle glide. The trackpad is not affected.",
+        smoothScrollCaption: "Turns each mouse wheel step into a long, gentle coast, with adjustable step, speed and duration. The trackpad is not affected.",
         smoothScrollStepLabel: "Distance per step",
+        smoothScrollSpeedLabel: "Speed",
+        smoothScrollDurationLabel: "Duration",
         mouseNavigationSection: "Navigation",
         mouseNavigationEnable: "Use side buttons for Back and Forward",
         mouseNavigationCaption: "Turns the mouse Back and Forward buttons into navigation commands in Finder, browsers and compatible apps.",

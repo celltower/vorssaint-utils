@@ -38,7 +38,9 @@ enum DefaultsKey {
     static let scrollInverterEnabled = "scrollInverterEnabled"
     static let scrollInverterHorizontalEnabled = "scrollInverterHorizontalEnabled"
     static let smoothScrollEnabled = "smoothScrollEnabled"
-    static let smoothScrollStep = "smoothScrollStep"      // pixels per wheel tick
+    static let smoothScrollStep = "smoothScrollStep"      // base pixels per wheel tick
+    static let smoothScrollSpeed = "smoothScrollSpeed"    // impulse multiplier
+    static let smoothScrollDuration = "smoothScrollDuration" // coast length (maps to lerp α)
     static let mouseNavigationEnabled = "mouseNavigationEnabled" // side buttons trigger Back and Forward
     static let mouseButtonShortcutsEnabled = "mouseButtonShortcutsEnabled" // extra buttons press a key combination (issue #282)
     static let mouseButtonShortcuts = "mouseButtonShortcuts" // [button number: GlobalShortcut storage value]
@@ -680,7 +682,9 @@ enum Defaults {
         DefaultsKey.scrollInverterEnabled: false,
         DefaultsKey.scrollInverterHorizontalEnabled: false,
         DefaultsKey.smoothScrollEnabled: false,
-        DefaultsKey.smoothScrollStep: 40,
+        DefaultsKey.smoothScrollStep: SmoothScrollSupport.defaultStep,
+        DefaultsKey.smoothScrollSpeed: SmoothScrollSupport.defaultSpeed,
+        DefaultsKey.smoothScrollDuration: SmoothScrollSupport.defaultDuration,
         DefaultsKey.mouseNavigationEnabled: false,
         DefaultsKey.mouseButtonShortcutsEnabled: false,
         DefaultsKey.mouseButtonShortcuts: [String: String](),

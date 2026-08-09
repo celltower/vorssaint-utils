@@ -616,6 +616,8 @@ struct MouseSettings: View {
     @AppStorage(DefaultsKey.scrollInverterHorizontalEnabled) private var invertHorizontal = false
     @AppStorage(DefaultsKey.smoothScrollEnabled) private var smoothScrollEnabled = false
     @AppStorage(DefaultsKey.smoothScrollStep) private var smoothScrollStep = SmoothScrollSupport.defaultStep
+    @AppStorage(DefaultsKey.smoothScrollSpeed) private var smoothScrollSpeed = SmoothScrollSupport.defaultSpeed
+    @AppStorage(DefaultsKey.smoothScrollDuration) private var smoothScrollDuration = SmoothScrollSupport.defaultDuration
     @AppStorage(DefaultsKey.mouseNavigationEnabled) private var mouseNavigationEnabled = false
     @AppStorage(DefaultsKey.mouseButtonShortcutsEnabled) private var mouseButtonShortcutsEnabled = false
     @AppStorage(DefaultsKey.middleClickEnabled) private var middleClickEnabled = false
@@ -663,10 +665,32 @@ struct MouseSettings: View {
                         HStack {
                             Slider(value: smoothScrollStepBinding,
                                    in: Double(SmoothScrollSupport.stepRange.lowerBound)...Double(SmoothScrollSupport.stepRange.upperBound),
-                                   step: 10) {
+                                   step: 1) {
                                 Text(l10n.s.smoothScrollStepLabel)
                             }
                             Text("\(SmoothScrollSupport.sanitizedStep(smoothScrollStep))")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 34, alignment: .trailing)
+                        }
+                        HStack {
+                            Slider(value: smoothScrollSpeedBinding,
+                                   in: SmoothScrollSupport.speedRange,
+                                   step: 0.1) {
+                                Text(l10n.s.smoothScrollSpeedLabel)
+                            }
+                            Text(smoothScrollSpeedText)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 34, alignment: .trailing)
+                        }
+                        HStack {
+                            Slider(value: smoothScrollDurationBinding,
+                                   in: SmoothScrollSupport.durationRange,
+                                   step: 0.05) {
+                                Text(l10n.s.smoothScrollDurationLabel)
+                            }
+                            Text(smoothScrollDurationText)
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                                 .frame(width: 34, alignment: .trailing)
@@ -759,8 +783,30 @@ struct MouseSettings: View {
     private var smoothScrollStepBinding: Binding<Double> {
         Binding(
             get: { Double(SmoothScrollSupport.sanitizedStep(smoothScrollStep)) },
-            set: { smoothScrollStep = Int($0) }
+            set: { smoothScrollStep = Int($0.rounded()) }
         )
+    }
+
+    private var smoothScrollSpeedBinding: Binding<Double> {
+        Binding(
+            get: { SmoothScrollSupport.sanitizedSpeed(smoothScrollSpeed) },
+            set: { smoothScrollSpeed = SmoothScrollSupport.sanitizedSpeed($0) }
+        )
+    }
+
+    private var smoothScrollDurationBinding: Binding<Double> {
+        Binding(
+            get: { SmoothScrollSupport.sanitizedDuration(smoothScrollDuration) },
+            set: { smoothScrollDuration = SmoothScrollSupport.sanitizedDuration($0) }
+        )
+    }
+
+    private var smoothScrollSpeedText: String {
+        String(format: "%.1f", SmoothScrollSupport.sanitizedSpeed(smoothScrollSpeed))
+    }
+
+    private var smoothScrollDurationText: String {
+        String(format: "%.2f", SmoothScrollSupport.sanitizedDuration(smoothScrollDuration))
     }
 }
 

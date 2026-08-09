@@ -5,9 +5,9 @@ import AppKit
 import Combine
 import CoreGraphics
 
-/// Turns the mouse wheel's discrete jumps into short glides: a tap swallows
+/// Turns the mouse wheel's discrete jumps into a longer coast: a tap swallows
 /// each wheel tick and replays its distance as a stream of continuous pixel
-/// events that ease out, like a touch device would produce.
+/// events that ease out exponentially, like a dedicated smooth-scroll tool.
 ///
 /// Wheel detection matches the scroll inverter (`ScrollWheelSupport`), so
 /// mice whose drivers report the wheel as continuous pixel events (issue
@@ -201,28 +201,26 @@ final class SmoothScrollService: ObservableObject {
         let invertHorizontal = invertHere
             && defaults.bool(forKey: DefaultsKey.scrollInverterHorizontalEnabled) ? -1.0 : 1.0
         let shiftPressed = event.flags.contains(.maskShift)
+        let step = Double(SmoothScrollSupport.sanitizedStep(
+            defaults.integer(forKey: DefaultsKey.smoothScrollStep)))
+        let speed = SmoothScrollSupport.sanitizedSpeed(
+            defaults.double(forKey: DefaultsKey.smoothScrollSpeed))
         let vertical: Double
         let horizontal: Double
-        let step: Double
         if traits.isContinuous {
-            // The distance comes from the same fixed-point field the discrete
-            // path reads, which counts lines, so it converts to pixels and
-            // the step scales it from there. No Shift redirect: the system
-            // never translates continuous events, apps react to the replayed
-            // Shift flag.
-            let userStep = Double(SmoothScrollSupport.sanitizedStep(
-                UserDefaults.standard.integer(forKey: DefaultsKey.smoothScrollStep)))
-            vertical = SmoothScrollSupport.continuousDistance(
+            // Continuous wheels already report points. No Shift redirect: the
+            // system never translates continuous events; apps react to the
+            // replayed Shift flag instead.
+            vertical = SmoothScrollSupport.continuousImpulse(
                 fixedPointDelta: event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1),
                 pointDelta: Double(event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1)),
-                step: userStep) * invertVertical
-            horizontal = SmoothScrollSupport.continuousDistance(
+                step: step,
+                speed: speed) * invertVertical
+            horizontal = SmoothScrollSupport.continuousImpulse(
                 fixedPointDelta: event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2),
                 pointDelta: Double(event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2)),
-                step: userStep) * invertHorizontal
-            // The distance is already in pixels; the budget must not scale it
-            // a second time.
-            step = 1
+                step: step,
+                speed: speed) * invertHorizontal
         } else {
             // The fixed-point field carries the fractional ticks that
             // high-resolution wheels report while the integer field reads 0.
@@ -235,10 +233,10 @@ final class SmoothScrollService: ObservableObject {
                     fixedPoint: event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2)),
                 shiftPressed: shiftPressed
             )
-            vertical = axes.vertical * invertVertical
-            horizontal = axes.horizontal * invertHorizontal
-            step = Double(SmoothScrollSupport.sanitizedStep(
-                UserDefaults.standard.integer(forKey: DefaultsKey.smoothScrollStep)))
+            vertical = SmoothScrollSupport.impulse(
+                delta: axes.vertical, step: step, speed: speed) * invertVertical
+            horizontal = SmoothScrollSupport.impulse(
+                delta: axes.horizontal, step: step, speed: speed) * invertHorizontal
         }
         guard vertical != 0 || horizontal != 0 else {
             return Unmanaged.passUnretained(event)
@@ -256,11 +254,9 @@ final class SmoothScrollService: ObservableObject {
         }
         carryVertical = SmoothScrollSupport.carry(carryVertical, continuing: vertical)
         carryHorizontal = SmoothScrollSupport.carry(carryHorizontal, continuing: horizontal)
-        remainingVertical = SmoothScrollSupport.remaining(afterTicks: vertical,
-                                                          step: step,
+        remainingVertical = SmoothScrollSupport.remaining(afterImpulse: vertical,
                                                           current: remainingVertical)
-        remainingHorizontal = SmoothScrollSupport.remaining(afterTicks: horizontal,
-                                                            step: step,
+        remainingHorizontal = SmoothScrollSupport.remaining(afterImpulse: horizontal,
                                                             current: remainingHorizontal)
         currentFlags = event.flags
         glideFromContinuous = traits.isContinuous
@@ -291,20 +287,29 @@ final class SmoothScrollService: ObservableObject {
     }
 
     private func emitFrame() {
-        let vertical = SmoothScrollSupport.frameDelta(remaining: remainingVertical)
-        let horizontal = SmoothScrollSupport.frameDelta(remaining: remainingHorizontal)
+        let transition = SmoothScrollSupport.transition(forDuration:
+            UserDefaults.standard.double(forKey: DefaultsKey.smoothScrollDuration))
+        let vertical = SmoothScrollSupport.frameDelta(remaining: remainingVertical,
+                                                      transition: transition)
+        let horizontal = SmoothScrollSupport.frameDelta(remaining: remainingHorizontal,
+                                                        transition: transition)
         remainingVertical -= vertical
         remainingHorizontal -= horizontal
 
         // The frame that empties the budget is the glide's last, so it spends
         // the leftovers rather than saving them for a frame that never comes.
-        let landing = remainingVertical == 0 && remainingHorizontal == 0
+        let landing = SmoothScrollSupport.hasLanded(remaining: remainingVertical,
+                                                    frame: vertical)
+            && SmoothScrollSupport.hasLanded(remaining: remainingHorizontal,
+                                             frame: horizontal)
         if vertical != 0 || horizontal != 0 {
             post(vertical: vertical, horizontal: horizontal, landing: landing)
         }
         if landing {
             frameTimer?.invalidate()
             frameTimer = nil
+            remainingVertical = 0
+            remainingHorizontal = 0
             carryVertical = 0
             carryHorizontal = 0
         }
@@ -326,6 +331,9 @@ final class SmoothScrollService: ObservableObject {
                                   wheel1: Self.pixelField(up.pixels),
                                   wheel2: Self.pixelField(across.pixels),
                                   wheel3: 0) else { return }
+        // Continuous point deltas are what apps expect from a trackpad-like
+        // glide; without the flag some views treat the stream as line ticks.
+        event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
         event.setIntegerValueField(.eventSourceUserData, value: ScrollWheelSupport.syntheticTag)
         event.flags = currentFlags
         event.post(tap: .cghidEventTap)
