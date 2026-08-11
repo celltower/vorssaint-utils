@@ -11,15 +11,18 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # Flags: --dev builds the local-only "Vorssaint (Developer)" variant (its own
-# bundle id, so it coexists with the official app); --install puts it in /Applications.
+# bundle id, so it coexists with the official app); --install puts it in /Applications;
+# --adhoc forces password-free ad-hoc codesign (skips Developer ID / legacy identity).
 DEV=0
 INSTALL=0
 TEST=0
+ADHOC=0
 for arg in "$@"; do
     case "$arg" in
         --dev)     DEV=1 ;;
         --install) INSTALL=1 ;;
         --test)    TEST=1 ;;
+        --adhoc)   ADHOC=1 ;;
     esac
 done
 
@@ -54,12 +57,12 @@ finalize_installed_bundle_after_child() {
 
     echo "▸ Finalizing installed signature…"
     sleep 3
-    if [[ -n "$devid" ]]; then
+    if (( ! ADHOC )) && [[ -n "$devid" ]]; then
         [[ -f "$helper" ]] && /usr/bin/codesign --force --strip-disallowed-xattrs \
             --options runtime --timestamp --identifier "$FAN_HELPER_ID" --sign "$devid" "$helper"
         /usr/bin/codesign --force --strip-disallowed-xattrs --options runtime --timestamp \
             --entitlements "$ENTITLEMENTS" --sign "$devid" "$bundle"
-    elif security find-identity -p codesigning 2>/dev/null | grep -q "$LEGACY_IDENTITY"; then
+    elif (( ! ADHOC )) && security find-identity -p codesigning 2>/dev/null | grep -q "$LEGACY_IDENTITY"; then
         [[ -f "$helper" ]] && /usr/bin/codesign --force --strip-disallowed-xattrs \
             --identifier "$FAN_HELPER_ID" --sign "$LEGACY_IDENTITY" "$helper"
         /usr/bin/codesign --force --strip-disallowed-xattrs --sign "$LEGACY_IDENTITY" "$bundle"
@@ -320,14 +323,19 @@ xattr -c -r "$STAGE" 2>/dev/null || true
 #   2. "Vorssaint Utils Signing" — the legacy stable self-signed identity, kept
 #      as a fallback so contributors without a Developer ID still get a constant
 #      designated requirement across their local builds.
-#   3. Ad-hoc — fresh clone with no identity at all.
-DEVID="$(developer_id_identity)"
+#   3. Ad-hoc — fresh clone with no identity at all, or --adhoc when the
+#      keychain password for a listed identity is unavailable.
+if (( ADHOC )); then
+    DEVID=""
+else
+    DEVID="$(developer_id_identity)"
+fi
 codesign_app() {
     local target="$1"
-    if [[ -n "$DEVID" ]]; then
+    if (( ! ADHOC )) && [[ -n "$DEVID" ]]; then
         codesign --force --strip-disallowed-xattrs --options runtime --timestamp \
             --entitlements "$ENTITLEMENTS" --sign "$DEVID" "$target"
-    elif security find-identity -p codesigning 2>/dev/null | grep -q "$LEGACY_IDENTITY"; then
+    elif (( ! ADHOC )) && security find-identity -p codesigning 2>/dev/null | grep -q "$LEGACY_IDENTITY"; then
         codesign --force --strip-disallowed-xattrs --sign "$LEGACY_IDENTITY" "$target"
     else
         codesign --force --strip-disallowed-xattrs --sign - "$target"
@@ -336,10 +344,10 @@ codesign_app() {
 
 codesign_fan_helper() {
     local target="$1"
-    if [[ -n "$DEVID" ]]; then
+    if (( ! ADHOC )) && [[ -n "$DEVID" ]]; then
         codesign --force --strip-disallowed-xattrs --options runtime --timestamp \
             --identifier "$FAN_HELPER_ID" --sign "$DEVID" "$target"
-    elif security find-identity -p codesigning 2>/dev/null | grep -q "$LEGACY_IDENTITY"; then
+    elif (( ! ADHOC )) && security find-identity -p codesigning 2>/dev/null | grep -q "$LEGACY_IDENTITY"; then
         codesign --force --strip-disallowed-xattrs --identifier "$FAN_HELPER_ID" \
             --sign "$LEGACY_IDENTITY" "$target"
     else
@@ -352,7 +360,9 @@ sign_bundle() {
     local executable="$bundle/Contents/MacOS/$EXECUTABLE"
     local helper="$bundle/Contents/Library/LaunchServices/$FAN_HELPER_ID"
 
-    if [[ -n "$DEVID" ]]; then
+    if (( ADHOC )); then
+        echo "  signing ad-hoc (--adhoc; no keychain password needed)"
+    elif [[ -n "$DEVID" ]]; then
         echo "  signing with Developer ID (hardened runtime): $DEVID"
     elif security find-identity -p codesigning 2>/dev/null | grep -q "$LEGACY_IDENTITY"; then
         echo "  signing with legacy self-signed identity: $LEGACY_IDENTITY"

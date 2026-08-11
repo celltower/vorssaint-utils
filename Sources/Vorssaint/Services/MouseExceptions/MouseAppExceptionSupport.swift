@@ -114,4 +114,49 @@ enum MouseAppExceptionSupport {
     static func isExcepted(_ bundleIDs: [String], exceptions: Set<String>) -> Bool {
         bundleIDs.contains(where: exceptions.contains)
     }
+
+    /// Immutable answer the scroll taps consult. Built under the exceptions
+    /// lock so a dedicated tap thread never races the main-thread reload path.
+    struct LookupSnapshot: Equatable {
+        var lookups: [MouseExceptionScope: Set<String>]
+        var sourceProcessIDs: [MouseExceptionScope: Set<Int32>]
+        var allEmpty: Bool
+        var cachedBundleID: String?
+        var cachedRegion: CGRect?
+        var cachedPoint: CGPoint
+        var cachedAt: TimeInterval
+
+        static let empty = LookupSnapshot(lookups: [:],
+                                          sourceProcessIDs: [:],
+                                          allEmpty: true,
+                                          cachedBundleID: nil,
+                                          cachedRegion: nil,
+                                          cachedPoint: .zero,
+                                          cachedAt: -1)
+    }
+
+    /// Resolves whether a scope excludes the pointer target using only the
+    /// snapshot and already-known process identifiers — no window server.
+    static func excludes(scope: MouseExceptionScope,
+                         snapshot: LookupSnapshot,
+                         sourceProcessID: Int64,
+                         targetProcessID: Int64,
+                         targetBundleID: String?,
+                         pointerBundleID: String?) -> Bool {
+        guard let exceptions = snapshot.lookups[scope], !exceptions.isEmpty else {
+            return false
+        }
+        if let pid = Self.sourceProcessID(sourceProcessID),
+           snapshot.sourceProcessIDs[scope]?.contains(pid) == true {
+            return true
+        }
+        if let pid = Self.sourceProcessID(targetProcessID),
+           snapshot.sourceProcessIDs[scope]?.contains(pid) == true {
+            return true
+        }
+        if isExcepted(targetBundleID, exceptions: exceptions) {
+            return true
+        }
+        return isExcepted(pointerBundleID, exceptions: exceptions)
+    }
 }

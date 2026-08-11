@@ -38,7 +38,9 @@ enum DefaultsKey {
     static let scrollInverterEnabled = "scrollInverterEnabled"
     static let scrollInverterHorizontalEnabled = "scrollInverterHorizontalEnabled"
     static let smoothScrollEnabled = "smoothScrollEnabled"
-    static let smoothScrollStep = "smoothScrollStep"      // base pixels per wheel tick
+    static let smoothScrollVertical = "smoothScrollVertical"     // glide the vertical wheel axis
+    static let smoothScrollHorizontal = "smoothScrollHorizontal" // glide the horizontal wheel axis
+    static let smoothScrollStep = "smoothScrollStep"      // minimum stride per wheel tick
     static let smoothScrollSpeed = "smoothScrollSpeed"    // impulse multiplier
     static let smoothScrollDuration = "smoothScrollDuration" // coast length (maps to lerp α)
     static let mouseNavigationEnabled = "mouseNavigationEnabled" // side buttons trigger Back and Forward
@@ -679,9 +681,11 @@ enum Defaults {
         DefaultsKey.keepAwakeIconTint: KeepAwakeIconTint.orange.rawValue,
         DefaultsKey.keepAwakeActiveIcon: KeepAwakeActiveIcon.vorssaint.rawValue,
         DefaultsKey.showCountdown: false,
-        DefaultsKey.scrollInverterEnabled: false,
-        DefaultsKey.scrollInverterHorizontalEnabled: false,
-        DefaultsKey.smoothScrollEnabled: false,
+        DefaultsKey.scrollInverterEnabled: true,
+        DefaultsKey.scrollInverterHorizontalEnabled: true,
+        DefaultsKey.smoothScrollEnabled: true,
+        DefaultsKey.smoothScrollVertical: true,
+        DefaultsKey.smoothScrollHorizontal: true,
         DefaultsKey.smoothScrollStep: SmoothScrollSupport.defaultStep,
         DefaultsKey.smoothScrollSpeed: SmoothScrollSupport.defaultSpeed,
         DefaultsKey.smoothScrollDuration: SmoothScrollSupport.defaultDuration,
@@ -1076,6 +1080,7 @@ enum Defaults {
         let defaults = UserDefaults.standard
         migrateFanControlVisibility(in: defaults)
         migrateScrollInverterAxes(in: defaults)
+        migrateSmoothScrollNumbers(in: defaults)
         defaults.register(defaults: registeredDefaults)
         defaults.register(defaults: AppFeature.availabilityDefaults)
         migrateLegacyMenuBarTemperatureMetric(in: defaults)
@@ -1097,6 +1102,28 @@ enum Defaults {
         }
         defaults.set(defaults.bool(forKey: DefaultsKey.scrollInverterEnabled),
                      forKey: DefaultsKey.scrollInverterHorizontalEnabled)
+    }
+
+    /// Older builds stored step as an Int. `@AppStorage` Double bindings then
+    /// refuse to read or write the key, so the feel sliders look stuck. Rewrite
+    /// any integer leftovers as Doubles once.
+    static func migrateSmoothScrollNumbers(in defaults: UserDefaults) {
+        rewriteSmoothScrollNumber(in: defaults, key: DefaultsKey.smoothScrollStep,
+                                  sanitize: SmoothScrollSupport.sanitizedStep)
+        rewriteSmoothScrollNumber(in: defaults, key: DefaultsKey.smoothScrollSpeed,
+                                  sanitize: SmoothScrollSupport.sanitizedSpeed)
+        rewriteSmoothScrollNumber(in: defaults, key: DefaultsKey.smoothScrollDuration,
+                                  sanitize: SmoothScrollSupport.sanitizedDuration)
+    }
+
+    private static func rewriteSmoothScrollNumber(in defaults: UserDefaults,
+                                                  key: String,
+                                                  sanitize: (Double) -> Double) {
+        guard let value = defaults.object(forKey: key) else { return }
+        if value is Double { return }
+        if let number = value as? NSNumber {
+            defaults.set(sanitize(number.doubleValue), forKey: key)
+        }
     }
 
     static func migrateFanControlVisibility(in defaults: UserDefaults) {

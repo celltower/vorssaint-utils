@@ -606,104 +606,113 @@ struct EnergySettings: View {
 
 struct MouseSettings: View {
     @ObservedObject private var l10n = L10n.shared
-    @ObservedObject private var features = FeatureRuntime.shared
     @ObservedObject private var permissions = Permissions.shared
+    /// Status badges only — keep the set small so this page is not rebuilt on
+    /// every unrelated service publish.
     @ObservedObject private var inverter = ScrollInverter.shared
-    @ObservedObject private var smoothScroll = SmoothScrollService.shared
     @ObservedObject private var mouseNavigation = MouseNavigationService.shared
     @ObservedObject private var middleClick = MiddleClickService.shared
-    @AppStorage(DefaultsKey.scrollInverterEnabled) private var invertVertical = false
-    @AppStorage(DefaultsKey.scrollInverterHorizontalEnabled) private var invertHorizontal = false
-    @AppStorage(DefaultsKey.smoothScrollEnabled) private var smoothScrollEnabled = false
-    @AppStorage(DefaultsKey.smoothScrollStep) private var smoothScrollStep = SmoothScrollSupport.defaultStep
-    @AppStorage(DefaultsKey.smoothScrollSpeed) private var smoothScrollSpeed = SmoothScrollSupport.defaultSpeed
-    @AppStorage(DefaultsKey.smoothScrollDuration) private var smoothScrollDuration = SmoothScrollSupport.defaultDuration
+    @AppStorage(DefaultsKey.scrollInverterEnabled) private var invertVertical = true
+    @AppStorage(DefaultsKey.scrollInverterHorizontalEnabled) private var invertHorizontal = true
+    @AppStorage(DefaultsKey.smoothScrollEnabled) private var smoothScrollEnabled = true
+    @AppStorage(DefaultsKey.smoothScrollVertical) private var smoothScrollVertical = true
+    @AppStorage(DefaultsKey.smoothScrollHorizontal) private var smoothScrollHorizontal = true
     @AppStorage(DefaultsKey.mouseNavigationEnabled) private var mouseNavigationEnabled = false
     @AppStorage(DefaultsKey.mouseButtonShortcutsEnabled) private var mouseButtonShortcutsEnabled = false
     @AppStorage(DefaultsKey.middleClickEnabled) private var middleClickEnabled = false
     @AppStorage(DefaultsKey.middleClickTapFingers) private var middleClickTapFingers = 0
+    /// Local copies keep the sliders off UserDefaults/`@State` write loops that
+    /// froze this page (each Slider set used to bump a revision and re-render).
+    @State private var smoothScrollStep = SmoothScrollSupport.defaultStep
+    @State private var smoothScrollSpeed = SmoothScrollSupport.defaultSpeed
+    @State private var smoothScrollDuration = SmoothScrollSupport.defaultDuration
+    @State private var feelSaveWorkItem: DispatchWorkItem?
 
     var body: some View {
         Form {
-            if AppFeature.scrollInverter.isAvailable {
-                Section(l10n.s.scrollSection) {
-                    Toggle(l10n.s.invertVerticalScroll, isOn: $invertVertical)
-                        .onChange(of: invertVertical) { _, _ in
-                            ScrollInverter.shared.syncWithPreferences()
-                        }
-                    Toggle(l10n.s.invertHorizontalScroll, isOn: $invertHorizontal)
-                        .onChange(of: invertHorizontal) { _, _ in
-                            ScrollInverter.shared.syncWithPreferences()
-                        }
-                    if scrollDirectionEnabled, inverter.isRunning {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Text(l10n.s.scrollActiveNow)
-                                .font(.caption)
-                                .foregroundStyle(.green)
-                        }
-                    }
+            if mouseScrollingVisible {
+                Section(l10n.s.mouseScrollingSection) {
                     Text(l10n.s.scrollTrackpadNote)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if scrollDirectionEnabled {
-                        MouseExceptionsList(scope: .scrollDirection)
+                    if AppFeature.smoothScroll.isAvailable {
+                        Toggle(l10n.s.smoothScrollName, isOn: $smoothScrollEnabled)
+                            .onChange(of: smoothScrollEnabled) { _, on in
+                                SmoothScrollService.shared.syncWithPreferences()
+                                if on { requestAccessibilityIfNeeded() }
+                            }
+                        Text(l10n.s.smoothScrollCaption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if smoothScrollEnabled {
+                            Toggle(l10n.s.smoothScrollVerticalLabel, isOn: $smoothScrollVertical)
+                                .onChange(of: smoothScrollVertical) { _, _ in
+                                    SmoothScrollService.shared.refreshPreferences()
+                                }
+                            Toggle(l10n.s.smoothScrollHorizontalLabel, isOn: $smoothScrollHorizontal)
+                                .onChange(of: smoothScrollHorizontal) { _, _ in
+                                    SmoothScrollService.shared.refreshPreferences()
+                                }
+                            // Continuous sliders only: a 0.01 step over 0.01…100
+                            // makes SwiftUI allocate ~10k discrete stops and freezes
+                            // this whole Settings page for up to a minute.
+                            feelSlider(label: l10n.s.smoothScrollStepLabel,
+                                       caption: l10n.s.smoothScrollStepCaption,
+                                       value: $smoothScrollStep,
+                                       range: SmoothScrollSupport.stepRange)
+                            feelSlider(label: l10n.s.smoothScrollSpeedLabel,
+                                       caption: l10n.s.smoothScrollSpeedCaption,
+                                       value: $smoothScrollSpeed,
+                                       range: SmoothScrollSupport.speedRange)
+                            feelSlider(label: l10n.s.smoothScrollDurationLabel,
+                                       caption: l10n.s.smoothScrollDurationCaption,
+                                       value: $smoothScrollDuration,
+                                       range: SmoothScrollSupport.durationRange)
+                            Button(l10n.s.smoothScrollResetDefaults) {
+                                resetSmoothScrollFeel()
+                            }
+                            MouseExceptionsList(scope: .smoothScroll)
+                        }
                     }
-                }
-            }
-            if AppFeature.smoothScroll.isAvailable {
-                Section(l10n.s.smoothScrollName) {
-                    Toggle(l10n.s.smoothScrollName, isOn: $smoothScrollEnabled)
-                        .onChange(of: smoothScrollEnabled) { _, _ in
-                            SmoothScrollService.shared.syncWithPreferences()
-                        }
-                    Text(l10n.s.smoothScrollCaption)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if smoothScrollEnabled {
-                        HStack {
-                            Slider(value: smoothScrollStepBinding,
-                                   in: Double(SmoothScrollSupport.stepRange.lowerBound)...Double(SmoothScrollSupport.stepRange.upperBound),
-                                   step: 1) {
-                                Text(l10n.s.smoothScrollStepLabel)
+                    if AppFeature.scrollInverter.isAvailable {
+                        Toggle(l10n.s.invertVerticalScroll, isOn: $invertVertical)
+                            .onChange(of: invertVertical) { _, on in
+                                ScrollInverter.shared.syncWithPreferences()
+                                if on { requestAccessibilityIfNeeded() }
                             }
-                            Text("\(SmoothScrollSupport.sanitizedStep(smoothScrollStep))")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .frame(width: 34, alignment: .trailing)
-                        }
-                        HStack {
-                            Slider(value: smoothScrollSpeedBinding,
-                                   in: SmoothScrollSupport.speedRange,
-                                   step: 0.1) {
-                                Text(l10n.s.smoothScrollSpeedLabel)
+                        Toggle(l10n.s.invertHorizontalScroll, isOn: $invertHorizontal)
+                            .onChange(of: invertHorizontal) { _, on in
+                                ScrollInverter.shared.syncWithPreferences()
+                                if on { requestAccessibilityIfNeeded() }
                             }
-                            Text(smoothScrollSpeedText)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .frame(width: 34, alignment: .trailing)
-                        }
-                        HStack {
-                            Slider(value: smoothScrollDurationBinding,
-                                   in: SmoothScrollSupport.durationRange,
-                                   step: 0.05) {
-                                Text(l10n.s.smoothScrollDurationLabel)
+                        if scrollDirectionEnabled, inverter.isRunning {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text(l10n.s.scrollActiveNow)
+                                    .font(.caption)
+                                    .foregroundStyle(.green)
                             }
-                            Text(smoothScrollDurationText)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .frame(width: 34, alignment: .trailing)
                         }
-                        MouseExceptionsList(scope: .smoothScroll)
+                        if scrollDirectionEnabled {
+                            MouseExceptionsList(scope: .scrollDirection)
+                        }
+                    } else {
+                        Text(l10n.s.scrollDirectionUnavailableHint)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button(l10n.s.scrollDirectionEnableButton) {
+                            enableReverseScrollingFeature()
+                        }
                     }
                 }
             }
             if AppFeature.mouseNavigation.isAvailable {
                 Section(l10n.s.mouseNavigationSection) {
                     Toggle(l10n.s.mouseNavigationEnable, isOn: $mouseNavigationEnabled)
-                        .onChange(of: mouseNavigationEnabled) { _, _ in
+                        .onChange(of: mouseNavigationEnabled) { _, on in
                             MouseNavigationService.shared.syncWithPreferences()
+                            if on { requestAccessibilityIfNeeded() }
                         }
                     Text(l10n.s.mouseNavigationCaption)
                         .font(.caption)
@@ -724,8 +733,9 @@ struct MouseSettings: View {
             if AppFeature.middleClick.isAvailable {
                 Section(l10n.s.middleClickSection) {
                     Toggle(l10n.s.middleClickEnable, isOn: $middleClickEnabled)
-                        .onChange(of: middleClickEnabled) { _, _ in
+                        .onChange(of: middleClickEnabled) { _, on in
                             MiddleClickService.shared.syncWithPreferences()
+                            if on { requestAccessibilityIfNeeded() }
                         }
                     Text(l10n.s.middleClickEnableCaption)
                         .font(.caption)
@@ -761,7 +771,13 @@ struct MouseSettings: View {
         }
         .formStyle(.grouped)
         .onAppear {
+            loadFeelValues()
             MiddleClickService.shared.refreshDragGestureConflict()
+        }
+        .onDisappear {
+            feelSaveWorkItem?.cancel()
+            feelSaveWorkItem = nil
+            persistFeelValues()
         }
     }
 
@@ -776,37 +792,113 @@ struct MouseSettings: View {
         return anyEngaged && !permissions.accessibility
     }
 
+    private var mouseScrollingVisible: Bool {
+        AppFeature.smoothScroll.isAvailable || AppFeature.scrollInverter.isAvailable
+    }
+
     private var scrollDirectionEnabled: Bool {
         invertVertical || invertHorizontal
     }
 
-    private var smoothScrollStepBinding: Binding<Double> {
-        Binding(
-            get: { Double(SmoothScrollSupport.sanitizedStep(smoothScrollStep)) },
-            set: { smoothScrollStep = Int($0.rounded()) }
-        )
+    @ViewBuilder
+    private func feelSlider(label: String,
+                            caption: String,
+                            value: Binding<Double>,
+                            range: ClosedRange<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Slider(value: value, in: range) {
+                    Text(label)
+                }
+                .onChange(of: value.wrappedValue) { _, _ in
+                    scheduleFeelSave()
+                }
+                // Editable like Mos' slider + text field so Step/Speed/Duration
+                // can be typed precisely (e.g. 40 / 3 / 3).
+                TextField(
+                    "",
+                    value: Binding(
+                        get: { value.wrappedValue },
+                        set: { raw in
+                            let clamped = min(max(raw, range.lowerBound), range.upperBound)
+                            value.wrappedValue = clamped
+                            scheduleFeelSave()
+                        }
+                    ),
+                    format: .number.precision(.fractionLength(2))
+                )
+                .labelsHidden()
+                .multilineTextAlignment(.trailing)
+                .frame(width: 52)
+                .textFieldStyle(.roundedBorder)
+            }
+            Text(caption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
-    private var smoothScrollSpeedBinding: Binding<Double> {
-        Binding(
-            get: { SmoothScrollSupport.sanitizedSpeed(smoothScrollSpeed) },
-            set: { smoothScrollSpeed = SmoothScrollSupport.sanitizedSpeed($0) }
-        )
+    private func requestAccessibilityIfNeeded() {
+        guard !permissions.accessibility else { return }
+        permissions.requestAccessibility()
     }
 
-    private var smoothScrollDurationBinding: Binding<Double> {
-        Binding(
-            get: { SmoothScrollSupport.sanitizedDuration(smoothScrollDuration) },
-            set: { smoothScrollDuration = SmoothScrollSupport.sanitizedDuration($0) }
-        )
+    private func scheduleFeelSave() {
+        feelSaveWorkItem?.cancel()
+        let step = SmoothScrollSupport.sanitizedStep(smoothScrollStep)
+        let speed = SmoothScrollSupport.sanitizedSpeed(smoothScrollSpeed)
+        let duration = SmoothScrollSupport.sanitizedDuration(smoothScrollDuration)
+        let work = DispatchWorkItem {
+            let defaults = UserDefaults.standard
+            defaults.set(step, forKey: DefaultsKey.smoothScrollStep)
+            defaults.set(speed, forKey: DefaultsKey.smoothScrollSpeed)
+            defaults.set(duration, forKey: DefaultsKey.smoothScrollDuration)
+            SmoothScrollService.shared.refreshPreferences()
+        }
+        feelSaveWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
     }
 
-    private var smoothScrollSpeedText: String {
-        String(format: "%.1f", SmoothScrollSupport.sanitizedSpeed(smoothScrollSpeed))
+    private func persistFeelValues() {
+        let defaults = UserDefaults.standard
+        defaults.set(SmoothScrollSupport.sanitizedStep(smoothScrollStep),
+                     forKey: DefaultsKey.smoothScrollStep)
+        defaults.set(SmoothScrollSupport.sanitizedSpeed(smoothScrollSpeed),
+                     forKey: DefaultsKey.smoothScrollSpeed)
+        defaults.set(SmoothScrollSupport.sanitizedDuration(smoothScrollDuration),
+                     forKey: DefaultsKey.smoothScrollDuration)
+        SmoothScrollService.shared.refreshPreferences()
     }
 
-    private var smoothScrollDurationText: String {
-        String(format: "%.2f", SmoothScrollSupport.sanitizedDuration(smoothScrollDuration))
+    private func loadFeelValues() {
+        let defaults = UserDefaults.standard
+        smoothScrollStep = SmoothScrollSupport.sanitizedStep(
+            defaults.double(forKey: DefaultsKey.smoothScrollStep))
+        smoothScrollSpeed = SmoothScrollSupport.sanitizedSpeed(
+            defaults.double(forKey: DefaultsKey.smoothScrollSpeed))
+        smoothScrollDuration = SmoothScrollSupport.sanitizedDuration(
+            defaults.double(forKey: DefaultsKey.smoothScrollDuration))
+    }
+
+    private func resetSmoothScrollFeel() {
+        feelSaveWorkItem?.cancel()
+        feelSaveWorkItem = nil
+        let defaults = UserDefaults.standard
+        defaults.set(SmoothScrollSupport.defaultStep, forKey: DefaultsKey.smoothScrollStep)
+        defaults.set(SmoothScrollSupport.defaultSpeed, forKey: DefaultsKey.smoothScrollSpeed)
+        defaults.set(SmoothScrollSupport.defaultDuration, forKey: DefaultsKey.smoothScrollDuration)
+        smoothScrollVertical = true
+        smoothScrollHorizontal = true
+        loadFeelValues()
+        SmoothScrollService.shared.refreshPreferences()
+    }
+
+    private func enableReverseScrollingFeature() {
+        FeatureRuntime.shared.setAvailable(.scrollInverter, true)
+        invertVertical = true
+        invertHorizontal = true
+        ScrollInverter.shared.syncWithPreferences()
     }
 }
 
