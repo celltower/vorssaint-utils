@@ -162,6 +162,8 @@ extension Strings {
         smoothScrollSpeedCaption: "Imposta la velocità di scorrimento",
         smoothScrollDurationLabel: "Durata",
         smoothScrollDurationCaption: "Imposta la durata dell’animazione di scorrimento",
+        smoothScrollAccelerationLabel: "Accelerazione scorrimento",
+        smoothScrollAccelerationCaption: "Regola quanto vengono amplificati i movimenti rapidi della rotellina",
         smoothScrollResetDefaults: "Ripristina valori predefiniti",
         scrollDirectionUnavailableHint: "Lo scorrimento invertito è disattivato in Funzioni. Attivalo per cambiare direzione.",
         scrollDirectionEnableButton: "Attiva scorrimento invertito",

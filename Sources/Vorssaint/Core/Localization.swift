@@ -276,6 +276,8 @@ struct Strings {
     let smoothScrollSpeedCaption: String
     let smoothScrollDurationLabel: String
     let smoothScrollDurationCaption: String
+    let smoothScrollAccelerationLabel: String
+    let smoothScrollAccelerationCaption: String
     let smoothScrollResetDefaults: String
     let scrollDirectionUnavailableHint: String
     let scrollDirectionEnableButton: String
@@ -1217,6 +1219,8 @@ extension Strings {
         smoothScrollSpeedCaption: "Define a velocidade de rolagem",
         smoothScrollDurationLabel: "Duração",
         smoothScrollDurationCaption: "Define a duração da animação de rolagem",
+        smoothScrollAccelerationLabel: "Aceleração de rolagem",
+        smoothScrollAccelerationCaption: "Controla o quanto movimentos rápidos da rodinha são acelerados",
         smoothScrollResetDefaults: "Restaurar valores padrão",
         scrollDirectionUnavailableHint: "A inversão de rolagem está desligada em Recursos. Ative-a para alterar a direção.",
         scrollDirectionEnableButton: "Ativar inversão de rolagem",
@@ -2130,6 +2134,8 @@ extension Strings {
         smoothScrollSpeedCaption: "Sets the scroll speed",
         smoothScrollDurationLabel: "Duration",
         smoothScrollDurationCaption: "Sets the duration of the scrolling animation",
+        smoothScrollAccelerationLabel: "Scroll acceleration",
+        smoothScrollAccelerationCaption: "Controls how strongly fast wheel movements are amplified",
         smoothScrollResetDefaults: "Reset to default values",
         scrollDirectionUnavailableHint: "Reverse scrolling is off in Features. Turn it on to change direction.",
         scrollDirectionEnableButton: "Enable reverse scrolling",

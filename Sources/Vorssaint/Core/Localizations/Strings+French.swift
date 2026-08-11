@@ -162,6 +162,8 @@ extension Strings {
         smoothScrollSpeedCaption: "Définit la vitesse de défilement",
         smoothScrollDurationLabel: "Durée",
         smoothScrollDurationCaption: "Définit la durée de l’animation de défilement",
+        smoothScrollAccelerationLabel: "Accélération du défilement",
+        smoothScrollAccelerationCaption: "Règle l’amplification des mouvements rapides de la molette",
         smoothScrollResetDefaults: "Rétablir les valeurs par défaut",
         scrollDirectionUnavailableHint: "L’inversion du défilement est désactivée dans Fonctions. Activez-la pour changer la direction.",
         scrollDirectionEnableButton: "Activer l’inversion du défilement",

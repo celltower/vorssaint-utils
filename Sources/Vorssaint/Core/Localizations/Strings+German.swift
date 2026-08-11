@@ -162,6 +162,8 @@ extension Strings {
         smoothScrollSpeedCaption: "Legt die Scrollgeschwindigkeit fest",
         smoothScrollDurationLabel: "Dauer",
         smoothScrollDurationCaption: "Legt die Dauer der Bildlaufanimation fest",
+        smoothScrollAccelerationLabel: "Scrollbeschleunigung",
+        smoothScrollAccelerationCaption: "Regelt, wie stark schnelle Mausradbewegungen verstärkt werden",
         smoothScrollResetDefaults: "Auf Standardwerte zurücksetzen",
         scrollDirectionUnavailableHint: "Umgekehrtes Scrollen ist unter Funktionen ausgeschaltet. Aktiviere es, um die Richtung zu ändern.",
         scrollDirectionEnableButton: "Umgekehrtes Scrollen aktivieren",

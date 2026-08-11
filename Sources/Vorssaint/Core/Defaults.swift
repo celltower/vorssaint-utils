@@ -43,6 +43,7 @@ enum DefaultsKey {
     static let smoothScrollStep = "smoothScrollStep"      // minimum stride per wheel tick
     static let smoothScrollSpeed = "smoothScrollSpeed"    // impulse multiplier
     static let smoothScrollDuration = "smoothScrollDuration" // coast length (maps to lerp α)
+    static let smoothScrollAcceleration = "smoothScrollAcceleration" // 0…1 blend with accelerated point delta
     static let mouseNavigationEnabled = "mouseNavigationEnabled" // side buttons trigger Back and Forward
     static let mouseButtonShortcutsEnabled = "mouseButtonShortcutsEnabled" // extra buttons press a key combination (issue #282)
     static let mouseButtonShortcuts = "mouseButtonShortcuts" // [button number: GlobalShortcut storage value]
@@ -689,6 +690,7 @@ enum Defaults {
         DefaultsKey.smoothScrollStep: SmoothScrollSupport.defaultStep,
         DefaultsKey.smoothScrollSpeed: SmoothScrollSupport.defaultSpeed,
         DefaultsKey.smoothScrollDuration: SmoothScrollSupport.defaultDuration,
+        DefaultsKey.smoothScrollAcceleration: SmoothScrollSupport.defaultScrollAcceleration,
         DefaultsKey.mouseNavigationEnabled: false,
         DefaultsKey.mouseButtonShortcutsEnabled: false,
         DefaultsKey.mouseButtonShortcuts: [String: String](),
@@ -1114,6 +1116,8 @@ enum Defaults {
                                   sanitize: SmoothScrollSupport.sanitizedSpeed)
         rewriteSmoothScrollNumber(in: defaults, key: DefaultsKey.smoothScrollDuration,
                                   sanitize: SmoothScrollSupport.sanitizedDuration)
+        rewriteSmoothScrollNumber(in: defaults, key: DefaultsKey.smoothScrollAcceleration,
+                                  sanitize: SmoothScrollSupport.sanitizedScrollAcceleration)
     }
 
     private static func rewriteSmoothScrollNumber(in defaults: UserDefaults,

@@ -890,7 +890,7 @@ struct MetricsTests {
         expect(SmoothScrollSupport.frameTransition(base: 0.18, deltaTime: 1.0 / 120.0)
                 < SmoothScrollSupport.frameTransition(base: 0.18, deltaTime: 1.0 / 60.0),
                "a 120 Hz frame advances less of the coast than a 60 Hz frame")
-        expect(SmoothScrollSupport.transition(forDuration: 4.35) == 0.085,
+        expect(SmoothScrollSupport.transition(forDuration: 3.0) == 0.240,
                "the default duration maps to a soft lerp factor")
         expect(SmoothScrollSupport.transition(forDuration: 1.0) == 0.561,
                "a short duration maps to a snappy lerp factor")
@@ -927,20 +927,26 @@ struct MetricsTests {
                "without Accessibility the original wheel must pass through")
         expect(!SmoothScrollSupport.mustPassThroughRaw(accessibilityTrusted: true),
                "with Accessibility smoothing may swallow the wheel")
-        expect(SmoothScrollSupport.sanitizedStep(0) == 33.6,
+        expect(SmoothScrollSupport.sanitizedStep(0) == 39.69,
                "an unset step falls back to the default")
         expect(SmoothScrollSupport.sanitizedStep(500) == 100,
                "the step clamps to its range")
         expect(SmoothScrollSupport.sanitizedStep(0.005) == 0.01,
                "the step clamps to its lower bound")
-        expect(SmoothScrollSupport.sanitizedSpeed(0) == 2.70,
+        expect(SmoothScrollSupport.sanitizedSpeed(0) == 3.00,
                "an unset speed falls back to the default")
         expect(SmoothScrollSupport.sanitizedSpeed(99) == 10,
                "the speed clamps to its range")
-        expect(SmoothScrollSupport.sanitizedDuration(0) == 4.35,
+        expect(SmoothScrollSupport.sanitizedDuration(0) == 3.00,
                "an unset duration falls back to the default")
         expect(SmoothScrollSupport.sanitizedDuration(9) == 5,
                "the duration clamps to its range")
+        expect(SmoothScrollSupport.sanitizedScrollAcceleration(-1) == 0,
+               "scroll acceleration clamps to its lower bound")
+        expect(SmoothScrollSupport.sanitizedScrollAcceleration(0.45) == 0.45,
+               "scroll acceleration keeps an intermediate value")
+        expect(SmoothScrollSupport.sanitizedScrollAcceleration(2) == 1,
+               "scroll acceleration clamps to its upper bound")
         expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollEnabled] as? Bool == true,
                "smooth scrolling ships on by default")
         expect(Defaults.registeredDefaults[DefaultsKey.scrollInverterEnabled] as? Bool == true,
@@ -949,12 +955,16 @@ struct MetricsTests {
                "horizontal scroll inversion ships on by default")
         expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.scrollInverterHorizontalEnabled),
                "horizontal scroll direction follows settings backups")
-        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollStep] as? Double == 33.6,
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollStep] as? Double == 39.69,
                "smooth scrolling step registers its default")
-        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollSpeed] as? Double == 2.70,
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollSpeed] as? Double == 3.00,
                "smooth scrolling speed registers its default")
-        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollDuration] as? Double == 4.35,
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollDuration] as? Double == 3.00,
                "smooth scrolling duration registers its default")
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollAcceleration] as? Double == 0,
+               "scroll acceleration ships at zero by default")
+        expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.smoothScrollAcceleration),
+               "scroll acceleration follows settings backups")
         expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollVertical] as? Bool == true,
                "vertical smooth axis ships on by default")
         expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollHorizontal] as? Bool == true,
@@ -1139,6 +1149,7 @@ struct MetricsTests {
             suite.set(34 as Int, forKey: DefaultsKey.smoothScrollStep)
             suite.set(3 as Int, forKey: DefaultsKey.smoothScrollSpeed)
             suite.set(4 as Int, forKey: DefaultsKey.smoothScrollDuration)
+            suite.set(true, forKey: DefaultsKey.smoothScrollAcceleration)
             Defaults.migrateSmoothScrollNumbers(in: suite)
             expect(suite.object(forKey: DefaultsKey.smoothScrollStep) is Double,
                    "an Int step is rewritten as Double so AppStorage sliders can bind")
@@ -1148,6 +1159,9 @@ struct MetricsTests {
                    "an Int speed is rewritten as Double")
             expect(suite.object(forKey: DefaultsKey.smoothScrollDuration) is Double,
                    "an Int duration is rewritten as Double")
+            expect(suite.object(forKey: DefaultsKey.smoothScrollAcceleration) is Double
+                    && suite.double(forKey: DefaultsKey.smoothScrollAcceleration) == 1,
+                   "the former acceleration switch migrates to a full-strength Double")
         }
 
         // Mos usableValue priority: point → fixed-point → line (no ×10).
@@ -1159,6 +1173,22 @@ struct MetricsTests {
                "line is the last fallback")
         expect(SmoothScrollSupport.usableValue(line: 0, fixedPoint: 0, point: 0) == 0,
                "an empty reading is zero")
+        expect(SmoothScrollSupport.wheelValue(
+            line: 1, fixedPoint: 1, point: 80, step: 39.69,
+            scrollAcceleration: 0) == 39.69,
+               "zero scroll acceleration keeps the normalized raw distance")
+        expect(SmoothScrollSupport.wheelValue(
+            line: 1, fixedPoint: 1, point: 80, step: 39.69,
+            scrollAcceleration: 1) == 80,
+               "full scroll acceleration uses the accelerated point distance")
+        expect(abs(SmoothScrollSupport.wheelValue(
+            line: 1, fixedPoint: 1, point: 80, step: 39.69,
+            scrollAcceleration: 0.5) - 59.845) < 0.000001,
+               "intermediate scroll acceleration blends normalized raw and accelerated distances")
+        expect(SmoothScrollSupport.wheelValue(
+            line: 0, fixedPoint: 0, point: 12, step: 39.69,
+            scrollAcceleration: 0) == 39.69,
+               "unaccelerated mode falls back for drivers that only provide point deltas")
         expect(ScrollWheelSupport.pointsPerLine == 10,
                "one scroll line spans ten points for other wheel helpers")
         expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 4.0, pointDelta: 40) == 40,

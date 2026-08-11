@@ -162,6 +162,8 @@ extension Strings {
         smoothScrollSpeedCaption: "Define la velocidad de desplazamiento",
         smoothScrollDurationLabel: "Duración",
         smoothScrollDurationCaption: "Define la duración de la animación de desplazamiento",
+        smoothScrollAccelerationLabel: "Aceleración del desplazamiento",
+        smoothScrollAccelerationCaption: "Controla cuánto se amplifican los movimientos rápidos de la rueda",
         smoothScrollResetDefaults: "Restablecer valores predeterminados",
         scrollDirectionUnavailableHint: "La inversión del desplazamiento está desactivada en Funciones. Actívala para cambiar la dirección.",
         scrollDirectionEnableButton: "Activar inversión del desplazamiento",

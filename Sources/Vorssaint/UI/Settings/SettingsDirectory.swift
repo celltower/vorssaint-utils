@@ -64,6 +64,8 @@ enum SettingsDirectory {
                                                  s.smoothScrollStepLabel, s.smoothScrollStepCaption,
                                                  s.smoothScrollSpeedLabel, s.smoothScrollSpeedCaption,
                                                  s.smoothScrollDurationLabel, s.smoothScrollDurationCaption,
+                                                 s.smoothScrollAccelerationLabel,
+                                                 s.smoothScrollAccelerationCaption,
                                                  s.smoothScrollResetDefaults,
                                                  s.mouseNavigationEnable,
                                                  FeatureStrings.mouseButtons(language).pageTitle,

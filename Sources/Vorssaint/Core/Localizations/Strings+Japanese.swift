@@ -162,6 +162,8 @@ extension Strings {
         smoothScrollSpeedCaption: "スクロール速度を設定します",
         smoothScrollDurationLabel: "時間",
         smoothScrollDurationCaption: "スクロールアニメーションの長さを設定します",
+        smoothScrollAccelerationLabel: "スクロール加速",
+        smoothScrollAccelerationCaption: "ホイールを速く回したときの増幅量を調整します",
         smoothScrollResetDefaults: "デフォルト値に戻す",
         scrollDirectionUnavailableHint: "スクロール反転は機能でオフです。方向を変えるにはオンにしてください。",
         scrollDirectionEnableButton: "スクロール反転を有効にする",

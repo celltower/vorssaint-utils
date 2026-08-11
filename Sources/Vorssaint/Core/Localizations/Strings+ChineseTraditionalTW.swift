@@ -162,6 +162,8 @@ extension Strings {
         smoothScrollSpeedCaption: "設定捲動速度",
         smoothScrollDurationLabel: "時長",
         smoothScrollDurationCaption: "設定捲動動畫的時長",
+        smoothScrollAccelerationLabel: "捲動加速",
+        smoothScrollAccelerationCaption: "調整快速轉動滑鼠滾輪時的加速強度",
         smoothScrollResetDefaults: "恢復預設值",
         scrollDirectionUnavailableHint: "反向捲動已在功能中關閉。請開啟後再變更方向。",
         scrollDirectionEnableButton: "啟用反向捲動",

@@ -81,24 +81,29 @@ enum SmoothScrollSupport {
     static let durationUpperLimit: Double = 5.2
 
     /// Minimum stride of one wheel tick before speed is applied, in pixels.
-    /// Bounds and default match Mos' scroll options (0.01…100, default 33.6).
+    /// Bounds match Mos' scroll options; Vorssaint's tuned default is 39.69.
     /// Keep Settings sliders continuous — a 0.01 discrete step over this
     /// range freezes SwiftUI's Mouse page for a very long time.
     static let stepRange: ClosedRange<Double> = 0.01...100
-    static let defaultStep: Double = 33.6
+    static let defaultStep: Double = 39.69
     static var stepRangeText: String { rangeText(stepRange) }
 
     /// Multiplier on each impulse. Higher means more distance per notch.
-    /// Bounds and default match Mos (1…10, default 2.70).
+    /// Bounds match Mos (1…10); Vorssaint's tuned default is 3.00.
     static let speedRange: ClosedRange<Double> = 1.0...10.0
-    static let defaultSpeed: Double = 2.70
+    static let defaultSpeed: Double = 3.00
     static var speedRangeText: String { rangeText(speedRange) }
 
     /// How long the coast feels. Higher → smaller α → softer, longer glide.
-    /// Bounds and default match Mos (1…5, default 4.35).
+    /// Bounds match Mos (1…5); Vorssaint's tuned default is 3.00.
     static let durationRange: ClosedRange<Double> = 1.0...5.0
-    static let defaultDuration: Double = 4.35
+    static let defaultDuration: Double = 3.00
     static var durationRangeText: String { rangeText(durationRange) }
+
+    /// Blend between raw wheel movement and macOS' accelerated point delta.
+    /// Zero disables acceleration; one uses the full accelerated distance.
+    static let scrollAccelerationRange: ClosedRange<Double> = 0.0...1.0
+    static let defaultScrollAcceleration: Double = 0.0
 
     private static func rangeText(_ range: ClosedRange<Double>) -> String {
         String(format: "%.2f – %.2f", range.lowerBound, range.upperBound)
@@ -120,17 +125,22 @@ enum SmoothScrollSupport {
         var duration: Double = SmoothScrollSupport.defaultDuration
         var smoothVertical: Bool = true
         var smoothHorizontal: Bool = true
+        var scrollAcceleration: Double = SmoothScrollSupport.defaultScrollAcceleration
 
         static func sanitized(step: Double,
                               speed: Double,
                               duration: Double,
                               smoothVertical: Bool,
-                              smoothHorizontal: Bool) -> Preferences {
+                              smoothHorizontal: Bool,
+                              scrollAcceleration: Double = SmoothScrollSupport.defaultScrollAcceleration)
+        -> Preferences {
             Preferences(step: SmoothScrollSupport.sanitizedStep(step),
                         speed: SmoothScrollSupport.sanitizedSpeed(speed),
                         duration: SmoothScrollSupport.sanitizedDuration(duration),
                         smoothVertical: smoothVertical,
-                        smoothHorizontal: smoothHorizontal)
+                        smoothHorizontal: smoothHorizontal,
+                        scrollAcceleration: SmoothScrollSupport
+                            .sanitizedScrollAcceleration(scrollAcceleration))
         }
     }
 
@@ -253,6 +263,29 @@ enum SmoothScrollSupport {
         return 0
     }
 
+    /// Blends the normalized raw wheel distance with macOS' accelerated point
+    /// distance. Blending after applying Step makes the entire 0…1 range
+    /// useful instead of letting Step flatten most intermediate values.
+    static func wheelValue(line: Double,
+                           fixedPoint: Double,
+                           point: Double,
+                           step: Double,
+                           scrollAcceleration: Double) -> Double {
+        guard line.isFinite, fixedPoint.isFinite, point.isFinite else { return 0 }
+        let raw = fixedPoint != 0 ? fixedPoint : (line != 0 ? line : point)
+        let accelerated = usableValue(line: line, fixedPoint: fixedPoint, point: point)
+        guard raw != 0, accelerated != 0 else { return raw != 0 ? raw : accelerated }
+
+        let rawNormalized = normalized(delta: raw, step: step)
+        let acceleratedNormalized = normalized(delta: accelerated, step: step)
+        guard (rawNormalized < 0) == (acceleratedNormalized < 0) else {
+            return rawNormalized
+        }
+        let amount = sanitizedScrollAcceleration(scrollAcceleration)
+        let result = rawNormalized + (acceleratedNormalized - rawNormalized) * amount
+        return result.isFinite ? result : rawNormalized
+    }
+
     /// Convenience when only the continuous fields are present.
     static func continuousBase(fixedPointDelta: Double, pointDelta: Double) -> Double {
         usableValue(line: 0, fixedPoint: fixedPointDelta, point: pointDelta)
@@ -369,6 +402,18 @@ enum SmoothScrollSupport {
     static func sanitizedDuration(_ value: Double) -> Double {
         guard value.isFinite, value > 0 else { return defaultDuration }
         return min(max(value, durationRange.lowerBound), durationRange.upperBound)
+    }
+
+    static func sanitizedScrollAcceleration(_ value: Double) -> Double {
+        guard value.isFinite else { return defaultScrollAcceleration }
+        return min(max(value, scrollAccelerationRange.lowerBound),
+                   scrollAccelerationRange.upperBound)
+    }
+
+    private static func normalized(delta: Double, step: Double) -> Double {
+        guard delta.isFinite, delta != 0 else { return 0 }
+        let magnitude = max(abs(delta), sanitizedStep(step))
+        return delta > 0 ? magnitude : -magnitude
     }
 
     /// True when a new wheel reading must abandon the leftover coast before

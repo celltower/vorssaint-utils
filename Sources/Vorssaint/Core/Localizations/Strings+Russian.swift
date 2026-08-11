@@ -162,6 +162,8 @@ extension Strings {
         smoothScrollSpeedCaption: "Задаёт скорость прокрутки",
         smoothScrollDurationLabel: "Длительность",
         smoothScrollDurationCaption: "Задаёт длительность анимации прокрутки",
+        smoothScrollAccelerationLabel: "Ускорение прокрутки",
+        smoothScrollAccelerationCaption: "Регулирует усиление быстрых движений колеса",
         smoothScrollResetDefaults: "Сбросить до значений по умолчанию",
         scrollDirectionUnavailableHint: "Инверсия прокрутки выключена в разделе «Функции». Включите её, чтобы менять направление.",
         scrollDirectionEnableButton: "Включить инверсию прокрутки",

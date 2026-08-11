@@ -162,6 +162,8 @@ extension Strings {
         smoothScrollSpeedCaption: "Kaydırma hızını ayarlar",
         smoothScrollDurationLabel: "Süre",
         smoothScrollDurationCaption: "Kaydırma animasyonunun süresini ayarlar",
+        smoothScrollAccelerationLabel: "Kaydırma hızlandırması",
+        smoothScrollAccelerationCaption: "Hızlı tekerlek hareketlerinin ne kadar güçlendirileceğini ayarlar",
         smoothScrollResetDefaults: "Varsayılan değerlere sıfırla",
         scrollDirectionUnavailableHint: "Ters kaydırma Özellikler’de kapalı. Yönü değiştirmek için açın.",
         scrollDirectionEnableButton: "Ters kaydırmayı etkinleştir",

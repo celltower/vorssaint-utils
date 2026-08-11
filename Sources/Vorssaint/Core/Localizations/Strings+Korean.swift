@@ -162,6 +162,8 @@ extension Strings {
         smoothScrollSpeedCaption: "스크롤 속도를 설정합니다",
         smoothScrollDurationLabel: "지속 시간",
         smoothScrollDurationCaption: "스크롤 애니메이션 길이를 설정합니다",
+        smoothScrollAccelerationLabel: "스크롤 가속",
+        smoothScrollAccelerationCaption: "빠른 휠 움직임이 증폭되는 정도를 조절합니다",
         smoothScrollResetDefaults: "기본값으로 재설정",
         scrollDirectionUnavailableHint: "스크롤 방향 반전이 기능에서 꺼져 있습니다. 방향을 바꾸려면 켜세요.",
         scrollDirectionEnableButton: "스크롤 반전 사용",

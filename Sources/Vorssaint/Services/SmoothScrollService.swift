@@ -82,7 +82,8 @@ final class SmoothScrollService: ObservableObject {
             speed: defaults.double(forKey: DefaultsKey.smoothScrollSpeed),
             duration: defaults.double(forKey: DefaultsKey.smoothScrollDuration),
             smoothVertical: defaults.bool(forKey: DefaultsKey.smoothScrollVertical),
-            smoothHorizontal: defaults.bool(forKey: DefaultsKey.smoothScrollHorizontal)
+            smoothHorizontal: defaults.bool(forKey: DefaultsKey.smoothScrollHorizontal),
+            scrollAcceleration: defaults.double(forKey: DefaultsKey.smoothScrollAcceleration)
         )
         engineLock.withLock {
             engine.preferences = preferences
@@ -336,16 +337,20 @@ final class SmoothScrollService: ObservableObject {
         // the chain, so usable deltas are already flipped when reverse is on.
         let shiftPressed = event.flags.contains(.maskShift)
 
-        // Mos usableValue priority for every mouse wheel reading — continuous
-        // and discrete share the same fields (point → fixedPt → line).
-        let verticalUsable = SmoothScrollSupport.usableValue(
+        // The point field contains macOS wheel acceleration. Blend it with the
+        // raw fixed-point/line movement according to Scroll acceleration.
+        let verticalUsable = SmoothScrollSupport.wheelValue(
             line: Double(event.getIntegerValueField(.scrollWheelEventDeltaAxis1)),
             fixedPoint: event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1),
-            point: event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1))
-        let horizontalUsable = SmoothScrollSupport.usableValue(
+            point: event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1),
+            step: preferences.step,
+            scrollAcceleration: preferences.scrollAcceleration)
+        let horizontalUsable = SmoothScrollSupport.wheelValue(
             line: Double(event.getIntegerValueField(.scrollWheelEventDeltaAxis2)),
             fixedPoint: event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2),
-            point: event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2))
+            point: event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2),
+            step: preferences.step,
+            scrollAcceleration: preferences.scrollAcceleration)
 
         // Shift → horizontal happens at post time (like Mos' poster.shift),
         // so the buffer/filter still see the original axis. For planning we

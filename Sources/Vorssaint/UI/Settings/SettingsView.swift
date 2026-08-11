@@ -626,6 +626,7 @@ struct MouseSettings: View {
     @State private var smoothScrollStep = SmoothScrollSupport.defaultStep
     @State private var smoothScrollSpeed = SmoothScrollSupport.defaultSpeed
     @State private var smoothScrollDuration = SmoothScrollSupport.defaultDuration
+    @State private var smoothScrollAcceleration = SmoothScrollSupport.defaultScrollAcceleration
     @State private var feelSaveWorkItem: DispatchWorkItem?
 
     var body: some View {
@@ -668,6 +669,10 @@ struct MouseSettings: View {
                                        caption: l10n.s.smoothScrollDurationCaption,
                                        value: $smoothScrollDuration,
                                        range: SmoothScrollSupport.durationRange)
+                            feelSlider(label: l10n.s.smoothScrollAccelerationLabel,
+                                       caption: l10n.s.smoothScrollAccelerationCaption,
+                                       value: $smoothScrollAcceleration,
+                                       range: SmoothScrollSupport.scrollAccelerationRange)
                             Button(l10n.s.smoothScrollResetDefaults) {
                                 resetSmoothScrollFeel()
                             }
@@ -849,11 +854,14 @@ struct MouseSettings: View {
         let step = SmoothScrollSupport.sanitizedStep(smoothScrollStep)
         let speed = SmoothScrollSupport.sanitizedSpeed(smoothScrollSpeed)
         let duration = SmoothScrollSupport.sanitizedDuration(smoothScrollDuration)
+        let acceleration = SmoothScrollSupport
+            .sanitizedScrollAcceleration(smoothScrollAcceleration)
         let work = DispatchWorkItem {
             let defaults = UserDefaults.standard
             defaults.set(step, forKey: DefaultsKey.smoothScrollStep)
             defaults.set(speed, forKey: DefaultsKey.smoothScrollSpeed)
             defaults.set(duration, forKey: DefaultsKey.smoothScrollDuration)
+            defaults.set(acceleration, forKey: DefaultsKey.smoothScrollAcceleration)
             SmoothScrollService.shared.refreshPreferences()
         }
         feelSaveWorkItem = work
@@ -868,6 +876,8 @@ struct MouseSettings: View {
                      forKey: DefaultsKey.smoothScrollSpeed)
         defaults.set(SmoothScrollSupport.sanitizedDuration(smoothScrollDuration),
                      forKey: DefaultsKey.smoothScrollDuration)
+        defaults.set(SmoothScrollSupport.sanitizedScrollAcceleration(smoothScrollAcceleration),
+                     forKey: DefaultsKey.smoothScrollAcceleration)
         SmoothScrollService.shared.refreshPreferences()
     }
 
@@ -879,6 +889,8 @@ struct MouseSettings: View {
             defaults.double(forKey: DefaultsKey.smoothScrollSpeed))
         smoothScrollDuration = SmoothScrollSupport.sanitizedDuration(
             defaults.double(forKey: DefaultsKey.smoothScrollDuration))
+        smoothScrollAcceleration = SmoothScrollSupport.sanitizedScrollAcceleration(
+            defaults.double(forKey: DefaultsKey.smoothScrollAcceleration))
     }
 
     private func resetSmoothScrollFeel() {
@@ -888,6 +900,8 @@ struct MouseSettings: View {
         defaults.set(SmoothScrollSupport.defaultStep, forKey: DefaultsKey.smoothScrollStep)
         defaults.set(SmoothScrollSupport.defaultSpeed, forKey: DefaultsKey.smoothScrollSpeed)
         defaults.set(SmoothScrollSupport.defaultDuration, forKey: DefaultsKey.smoothScrollDuration)
+        defaults.set(SmoothScrollSupport.defaultScrollAcceleration,
+                     forKey: DefaultsKey.smoothScrollAcceleration)
         smoothScrollVertical = true
         smoothScrollHorizontal = true
         loadFeelValues()
