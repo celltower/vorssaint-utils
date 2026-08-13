@@ -4,6 +4,72 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [3.3.2]
+
+### Summary
+Vorssaint 3.3.2 improves the Command Bar, Switcher, screenshots, Cleaning Mode,
+Scratchpad and audio reliability. It also refines app management, feature setup,
+Fan Control, Quit on close, network monitoring, power and peripheral battery
+readings, panel behavior and keyboard controls.
+
+### Added
+- Emoji can open directly from a shortcut assigned to its Command Bar row.
+  Thanks to @MaximilianMauroner.
+
+### Changed
+- App Updates now searches more places on your Mac and lets each source be turned
+  on or off. Thanks to @ruvelro.
+- Installed Features rows open their Settings page and highlight the relevant
+  controls. Thanks to @dorlugasigal.
+- Cleaning and the Uninstaller now explain how to grant Full Disk Access and
+  that the app must reopen. Thanks to @PathGao.
+- Quit on close exceptions are no longer editable while the feature is off, since
+  nothing reads them there. Thanks to @PathGao.
+- Showing Clipboard in the panel now sits on its own in Settings, since it keeps
+  working while history capture is off. Thanks to @PathGao.
+- The Command Bar now accepts Control-P and Control-N to move through results.
+  Thanks to @theafox.
+
+### Fixed
+- Network download speed no longer stays at zero when the usual system counter
+  misses received traffic.
+- Quit on close now extends an app exception to separate guest-app windows.
+  Thanks to @danno71.
+- Peripheral battery can now read connected accessories that report charge only
+  through the standard Bluetooth battery service. Thanks to @subhamayd2.
+- Window screenshots now keep translucent content visible over the selected
+  background. Thanks to @lmilojevicc.
+- Scratchpad tab controls now follow the window width instead of leaving unused
+  space after resizing. Thanks to @AB-boi.
+- Cleaning Mode no longer flashes or loses input during bursts of display changes.
+  Thanks to @Polovinkin.
+- Back and Forward mouse buttons now stay responsive in browsers that handle
+  them directly. Thanks to @originalspec and @jbleuzen.
+- The Command Bar now appears immediately while its results finish loading.
+  Thanks to @MaximilianMauroner.
+- App Updates no longer offers store updates that belong to a different app.
+  Thanks to @PathGao.
+- The App Switcher now shows its configured shortcut in the large icon mode label.
+  Thanks to @liuxxxu.
+- The App Switcher now restores minimized windows when selected.
+- The app no longer quits while typing when the Switcher's Windows shortcut uses a
+  key whose label comes from the keyboard layout. Thanks to @eioz.
+- The Super key now works when Caps Lock is set to do nothing.
+- Dock Preview controls no longer show an oversized blue effect when focused or
+  hovered.
+- The Volume Mixer now restores sound if an app's volume adjustment stops
+  working, instead of leaving it silent until Vorssaint quits.
+- System power no longer mirrors the adapter reading when its own sensor is
+  unavailable.
+- The Uninstaller now offers to remove the Homebrew package with an app it manages.
+  Thanks to @MineraleYT.
+- Homebrew now clears removed package details and returns its package list to the
+  start after an uninstall. Thanks to @MineraleYT.
+- The menu panel now stays open when focus changes without an outside click.
+  Thanks to @CALLmeDOMIN.
+- Fan Control can now request its required approval instead of appearing
+  unavailable before its first setup.
+
 ## [3.3.1] - 2026-08-09
 
 ### Summary

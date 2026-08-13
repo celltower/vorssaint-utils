@@ -1057,6 +1057,7 @@ struct Strings {
     let invertHorizontalScroll: String
     let switcherShowShortcutHints: String
     let switcherShowShortcutHintsCaption: String
+    let uninstallerHomebrewPackageFormat: String
 }
 
 // MARK: - Português (Brasil)
@@ -1269,7 +1270,7 @@ extension Strings {
         switcherEnableCaption: "Troque de app ou janela, inclusive janelas minimizadas e várias janelas do mesmo app.",
         switcherUsageHint: "Segure o atalho para navegar; solte para ativar a janela. Shift ou ← volta; W fecha a janela; Q encerra o app; Esc cancela.",
         switcherNoWindows: "Nenhuma janela aberta",
-        switcherIconRowMode: "Mostrar ⌘Tab com ícones grandes",
+        switcherIconRowMode: "Mostrar %@ com ícones grandes",
         switcherIconRowModeCaption: "Mostra um ícone por app com os previews das janelas do app acima.",
         switcherSimpleMode: "Alternador simples",
         switcherSimpleModeCaption: "Mostra ícones de apps e títulos das janelas, sem previews nem captura da tela pelo alternador.",
@@ -1970,7 +1971,8 @@ extension Strings {
         invertVerticalScroll: "Inverter rolagem vertical",
         invertHorizontalScroll: "Inverter rolagem horizontal",
         switcherShowShortcutHints: "Mostrar dicas de atalhos",
-        switcherShowShortcutHintsCaption: "Exibe os atalhos de apps e janelas abaixo dos ícones."
+        switcherShowShortcutHintsCaption: "Exibe os atalhos de apps e janelas abaixo dos ícones.",
+        uninstallerHomebrewPackageFormat: "%@ também será removido do Homebrew."
     )
 }
 
@@ -2184,7 +2186,7 @@ extension Strings {
         switcherEnableCaption: "Switch between apps and windows, including minimized windows and multiple windows from the same app.",
         switcherUsageHint: "Hold the shortcut to navigate; release to activate the window. Shift or ← goes back; W closes the window; Q quits the app; Esc cancels.",
         switcherNoWindows: "No open windows",
-        switcherIconRowMode: "Show ⌘Tab with large icons",
+        switcherIconRowMode: "Show %@ with large icons",
         switcherIconRowModeCaption: "Shows one icon per app with that app's window previews above it.",
         switcherSimpleMode: "Simple app switcher",
         switcherSimpleModeCaption: "Shows app icons and window titles, without previews or screen capture by the switcher.",
@@ -2885,6 +2887,7 @@ extension Strings {
         invertVerticalScroll: "Invert vertical scrolling",
         invertHorizontalScroll: "Invert horizontal scrolling",
         switcherShowShortcutHints: "Show shortcut hints",
-        switcherShowShortcutHintsCaption: "Shows the app and window shortcuts below the icons."
+        switcherShowShortcutHintsCaption: "Shows the app and window shortcuts below the icons.",
+        uninstallerHomebrewPackageFormat: "%@ will also be removed from Homebrew."
     )
 }

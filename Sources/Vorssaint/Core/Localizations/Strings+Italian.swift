@@ -211,7 +211,7 @@ extension Strings {
         switcherEnableCaption: "Passa tra app e finestre, incluse quelle ridotte a icona e più finestre della stessa app.",
         switcherUsageHint: "Tieni premuta la scorciatoia per spostarti; rilascia per attivare la finestra. Maiuscole o ← torna indietro; W chiude la finestra; Q chiude l'app; Esc annulla.",
         switcherNoWindows: "Nessuna finestra aperta",
-        switcherIconRowMode: "Mostra ⌘Tab con icone grandi",
+        switcherIconRowMode: "Mostra %@ con icone grandi",
         switcherIconRowModeCaption: "Mostra un'icona per app con le anteprime delle sue finestre sopra.",
         switcherSimpleMode: "Selettore app semplice",
         switcherSimpleModeCaption: "Mostra icone delle app e titoli delle finestre, senza anteprime né acquisizione dello schermo dal selettore.",
@@ -912,6 +912,7 @@ extension Strings {
         invertVerticalScroll: "Inverti lo scorrimento verticale",
         invertHorizontalScroll: "Inverti lo scorrimento orizzontale",
         switcherShowShortcutHints: "Mostra suggerimenti scorciatoie",
-        switcherShowShortcutHintsCaption: "Mostra le scorciatoie per app e finestre sotto le icone."
+        switcherShowShortcutHintsCaption: "Mostra le scorciatoie per app e finestre sotto le icone.",
+        uninstallerHomebrewPackageFormat: "%@ verrà rimosso anche da Homebrew."
     )
 }

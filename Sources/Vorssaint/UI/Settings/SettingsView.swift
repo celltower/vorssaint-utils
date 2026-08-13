@@ -4,19 +4,6 @@
 import AppKit
 import SwiftUI
 
-/// One entry in the Settings sidebar. New features add a case here and a row in
-/// the Features section, so every feature gets its own page.
-/// Selects the visible Settings page; the menu bar uses it to open Settings
-/// directly on a specific page.
-final class SettingsRouter: ObservableObject {
-    static let shared = SettingsRouter()
-    @Published var page: SettingsPage = .general
-    /// One-shot hint for the Cleaner page's tool switcher, so a panel surface
-    /// can land directly on a specific tool. Consumed and cleared on arrival.
-    @Published var cleanerTool: String?
-    private init() {}
-}
-
 /// System-Settings-style window: a sidebar of pages on the left, the selected
 /// page on the right. Scales cleanly as features are added, and gives each
 /// feature a page of its own with room for examples and advanced options.
@@ -37,6 +24,7 @@ struct SettingsView: View {
                 .navigationSplitViewColumnWidth(min: 198, ideal: 210, max: 240)
         } detail: {
             detail
+                .settingsSectionFocus(for: router.page)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .navigationSplitViewStyle(.balanced)
@@ -203,6 +191,7 @@ struct GeneralSettings: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .settingsSectionAnchor(.panelConfiguration)
             if AppFeature.keepAwake.isAvailable {
                 Section(l10n.s.globalHotkeySection) {
                     Toggle(l10n.s.hotkeyToggle, isOn: $hotkeyEnabled)
@@ -248,6 +237,7 @@ struct GeneralSettings: View {
                     }
                     SettingsCaptionText(l10n.s.musicBlockCaption)
                 }
+                .settingsSectionAnchor(.musicBlocking)
             }
             Section(feedbackStrings.sectionTitle) {
                 Button {
@@ -421,6 +411,7 @@ struct EnergySettings: View {
                                               caption: displaySleepStrings.allowDisplaySleepCaption,
                                               isOn: $keepAwakeAllowDisplaySleep)
                 }
+                .settingsSectionAnchor(.keepAwake)
                 Section(automationStrings.automationSection) {
                     SettingsCaptionText(automationStrings.automationCaption)
                     KeepAwakeAutomationEditor()
@@ -513,6 +504,7 @@ struct EnergySettings: View {
                         SettingsCaptionText(strings.externalCaption)
                     }
                 }
+                .settingsSectionAnchor(.brightness)
             }
             if AppFeature.extraBrightness.isAvailable {
                 Section(l10n.s.extraBrightnessName) {
@@ -536,6 +528,7 @@ struct EnergySettings: View {
                         SettingsCaptionText(l10n.s.extraBrightnessUnsupported)
                     }
                 }
+                .settingsSectionAnchor(.extraBrightness)
             }
         }
         .formStyle(.grouped)
@@ -631,86 +624,100 @@ struct MouseSettings: View {
 
     var body: some View {
         Form {
-            if mouseScrollingVisible {
+            if AppFeature.smoothScroll.isAvailable {
                 Section(l10n.s.mouseScrollingSection) {
                     Text(l10n.s.scrollTrackpadNote)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if AppFeature.smoothScroll.isAvailable {
-                        Toggle(l10n.s.smoothScrollName, isOn: $smoothScrollEnabled)
-                            .onChange(of: smoothScrollEnabled) { _, on in
-                                SmoothScrollService.shared.syncWithPreferences()
-                                if on { requestAccessibilityIfNeeded() }
-                            }
-                        Text(l10n.s.smoothScrollCaption)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if smoothScrollEnabled {
-                            Toggle(l10n.s.smoothScrollVerticalLabel, isOn: $smoothScrollVertical)
-                                .onChange(of: smoothScrollVertical) { _, _ in
-                                    SmoothScrollService.shared.refreshPreferences()
-                                }
-                            Toggle(l10n.s.smoothScrollHorizontalLabel, isOn: $smoothScrollHorizontal)
-                                .onChange(of: smoothScrollHorizontal) { _, _ in
-                                    SmoothScrollService.shared.refreshPreferences()
-                                }
-                            // Continuous sliders only: a 0.01 step over 0.01…100
-                            // makes SwiftUI allocate ~10k discrete stops and freezes
-                            // this whole Settings page for up to a minute.
-                            feelSlider(label: l10n.s.smoothScrollStepLabel,
-                                       caption: l10n.s.smoothScrollStepCaption,
-                                       value: $smoothScrollStep,
-                                       range: SmoothScrollSupport.stepRange)
-                            feelSlider(label: l10n.s.smoothScrollSpeedLabel,
-                                       caption: l10n.s.smoothScrollSpeedCaption,
-                                       value: $smoothScrollSpeed,
-                                       range: SmoothScrollSupport.speedRange)
-                            feelSlider(label: l10n.s.smoothScrollDurationLabel,
-                                       caption: l10n.s.smoothScrollDurationCaption,
-                                       value: $smoothScrollDuration,
-                                       range: SmoothScrollSupport.durationRange)
-                            feelSlider(label: l10n.s.smoothScrollAccelerationLabel,
-                                       caption: l10n.s.smoothScrollAccelerationCaption,
-                                       value: $smoothScrollAcceleration,
-                                       range: SmoothScrollSupport.scrollAccelerationRange)
-                            Button(l10n.s.smoothScrollResetDefaults) {
-                                resetSmoothScrollFeel()
-                            }
+                    Toggle(l10n.s.smoothScrollName, isOn: $smoothScrollEnabled)
+                        .onChange(of: smoothScrollEnabled) { _, on in
+                            SmoothScrollService.shared.syncWithPreferences()
+                            if on { requestAccessibilityIfNeeded() }
                         }
-                    }
-                    if AppFeature.scrollInverter.isAvailable {
-                        Toggle(l10n.s.invertVerticalScroll, isOn: $invertVertical)
-                            .onChange(of: invertVertical) { _, on in
-                                ScrollInverter.shared.syncWithPreferences()
-                                if on { requestAccessibilityIfNeeded() }
+                    Text(l10n.s.smoothScrollCaption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if smoothScrollEnabled {
+                        Toggle(l10n.s.smoothScrollVerticalLabel, isOn: $smoothScrollVertical)
+                            .onChange(of: smoothScrollVertical) { _, _ in
+                                SmoothScrollService.shared.refreshPreferences()
                             }
-                        Toggle(l10n.s.invertHorizontalScroll, isOn: $invertHorizontal)
-                            .onChange(of: invertHorizontal) { _, on in
-                                ScrollInverter.shared.syncWithPreferences()
-                                if on { requestAccessibilityIfNeeded() }
+                        Toggle(l10n.s.smoothScrollHorizontalLabel, isOn: $smoothScrollHorizontal)
+                            .onChange(of: smoothScrollHorizontal) { _, _ in
+                                SmoothScrollService.shared.refreshPreferences()
                             }
-                        if scrollDirectionEnabled, inverter.isRunning {
-                            HStack(spacing: 6) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                                Text(l10n.s.scrollActiveNow)
-                                    .font(.caption)
-                                    .foregroundStyle(.green)
-                            }
-                        }
-                    } else {
-                        Text(l10n.s.scrollDirectionUnavailableHint)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button(l10n.s.scrollDirectionEnableButton) {
-                            enableReverseScrollingFeature()
+                        // Continuous sliders only: a 0.01 step over 0.01…100
+                        // makes SwiftUI allocate ~10k discrete stops and freezes
+                        // this whole Settings page for up to a minute.
+                        feelSlider(label: l10n.s.smoothScrollStepLabel,
+                                   caption: l10n.s.smoothScrollStepCaption,
+                                   value: $smoothScrollStep,
+                                   range: SmoothScrollSupport.stepRange)
+                        feelSlider(label: l10n.s.smoothScrollSpeedLabel,
+                                   caption: l10n.s.smoothScrollSpeedCaption,
+                                   value: $smoothScrollSpeed,
+                                   range: SmoothScrollSupport.speedRange)
+                        feelSlider(label: l10n.s.smoothScrollDurationLabel,
+                                   caption: l10n.s.smoothScrollDurationCaption,
+                                   value: $smoothScrollDuration,
+                                   range: SmoothScrollSupport.durationRange)
+                        feelSlider(label: l10n.s.smoothScrollAccelerationLabel,
+                                   caption: l10n.s.smoothScrollAccelerationCaption,
+                                   value: $smoothScrollAcceleration,
+                                   range: SmoothScrollSupport.scrollAccelerationRange)
+                        Button(l10n.s.smoothScrollResetDefaults) {
+                            resetSmoothScrollFeel()
                         }
                     }
                     if mouseScrollingExceptionsVisible {
                         MouseExceptionsList(scope: .smoothScroll)
                     }
                 }
+                .settingsSectionAnchor(.smoothScroll)
             }
+            if AppFeature.scrollInverter.isAvailable {
+                Section(l10n.s.scrollSection) {
+                    if !AppFeature.smoothScroll.isAvailable {
+                        Text(l10n.s.scrollTrackpadNote)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Toggle(l10n.s.invertVerticalScroll, isOn: $invertVertical)
+                        .onChange(of: invertVertical) { _, on in
+                            ScrollInverter.shared.syncWithPreferences()
+                            if on { requestAccessibilityIfNeeded() }
+                        }
+                    Toggle(l10n.s.invertHorizontalScroll, isOn: $invertHorizontal)
+                        .onChange(of: invertHorizontal) { _, on in
+                            ScrollInverter.shared.syncWithPreferences()
+                            if on { requestAccessibilityIfNeeded() }
+                        }
+                    if scrollDirectionEnabled, inverter.isRunning {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text(l10n.s.scrollActiveNow)
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                        }
+                    }
+                    if !AppFeature.smoothScroll.isAvailable, mouseScrollingExceptionsVisible {
+                        MouseExceptionsList(scope: .smoothScroll)
+                    }
+                }
+                .settingsSectionAnchor(.scrollDirection)
+            } else if AppFeature.smoothScroll.isAvailable {
+                Section(l10n.s.scrollSection) {
+                    Text(l10n.s.scrollDirectionUnavailableHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button(l10n.s.scrollDirectionEnableButton) {
+                        enableReverseScrollingFeature()
+                    }
+                }
+                .settingsSectionAnchor(.scrollDirection)
+            }
+
             if AppFeature.mouseNavigation.isAvailable {
                 Section(l10n.s.mouseNavigationSection) {
                     Toggle(l10n.s.mouseNavigationEnable, isOn: $mouseNavigationEnabled)
@@ -730,6 +737,7 @@ struct MouseSettings: View {
                         MouseExceptionsList(scope: .navigation)
                     }
                 }
+                .settingsSectionAnchor(.mouseNavigation)
             }
             if AppFeature.mouseButtonShortcuts.isAvailable {
                 MouseButtonShortcutsSection()
@@ -766,6 +774,7 @@ struct MouseSettings: View {
                         MouseExceptionsList(scope: .middleClick)
                     }
                 }
+                .settingsSectionAnchor(.middleClick)
             }
             if accessibilityNoteVisible {
                 Section(l10n.s.permissionRequired) {
@@ -794,10 +803,6 @@ struct MouseSettings: View {
             || (mouseButtonShortcutsEnabled && AppFeature.mouseButtonShortcuts.isAvailable)
             || (middleClickEnabled && AppFeature.middleClick.isAvailable)
         return anyEngaged && !permissions.accessibility
-    }
-
-    private var mouseScrollingVisible: Bool {
-        AppFeature.smoothScroll.isAvailable || AppFeature.scrollInverter.isAvailable
     }
 
     private var mouseScrollingExceptionsVisible: Bool {
@@ -920,14 +925,13 @@ struct MouseSettings: View {
     }
 }
 
-// MARK: - Switcher
-
 struct SwitcherSettings: View {
     @ObservedObject private var l10n = L10n.shared
     @ObservedObject private var features = FeatureRuntime.shared
     @ObservedObject private var permissions = Permissions.shared
     @ObservedObject private var dockPreview = DockPreviewService.shared
     @AppStorage(DefaultsKey.switcherEnabled) private var switcherEnabled = true
+    @AppStorage(DefaultsKey.switcherShortcut) private var switcherShortcutStorage = GlobalShortcut.switcherDefault.storageValue
     @AppStorage(DefaultsKey.switcherIconRowMode) private var switcherIconRowMode = false
     @AppStorage(DefaultsKey.switcherSimpleMode) private var switcherSimpleMode = false
     @AppStorage(DefaultsKey.switcherMergeTabs) private var switcherMergeTabs = false
@@ -944,6 +948,9 @@ struct SwitcherSettings: View {
 
     private var switcherEngaged: Bool { switcherEnabled && AppFeature.switcher.isAvailable }
     private var dockPreviewEngaged: Bool { dockPreviewEnabled && AppFeature.dockPreview.isAvailable }
+    private var switcherShortcutDisplayString: String {
+        (GlobalShortcut(storageValue: switcherShortcutStorage) ?? .switcherDefault).displayString
+    }
 
     var body: some View {
         Form {
@@ -989,7 +996,8 @@ struct SwitcherSettings: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Toggle(l10n.s.switcherIconRowMode, isOn: $switcherIconRowMode)
+                    Toggle(String(format: l10n.s.switcherIconRowMode, switcherShortcutDisplayString),
+                           isOn: $switcherIconRowMode)
                         .disabled(!switcherEnabled || switcherSimpleMode)
                         .onChange(of: switcherIconRowMode) { _, _ in
                             AppSwitcher.shared.syncWithPreferences()
@@ -1030,6 +1038,7 @@ struct SwitcherSettings: View {
                         .foregroundStyle(.secondary)
                     SwitcherAppRulesList()
                 }
+                .settingsSectionAnchor(.switcher)
             }
             if AppFeature.dockPreview.isAvailable || AppFeature.dockClick.isAvailable {
                 Section {
@@ -1083,6 +1092,7 @@ struct SwitcherSettings: View {
                 } header: {
                     Text(l10n.s.dockPreviewName)
                 }
+                .settingsSectionAnchor(.dock)
             }
             if AppFeature.switcher.isAvailable || AppFeature.dockPreview.isAvailable {
                 Section {

@@ -4,6 +4,7 @@
 import CoreAudio
 import CoreGraphics
 import Carbon.HIToolbox
+import Combine
 import Darwin
 import Foundation
 
@@ -511,6 +512,23 @@ struct MetricsTests {
         expect(BatteryTimeSupport.formatted(seconds: 30) == "0h 1m",
                "battery time keeps a positive final minute visible")
 
+        expect(MetricFormat.systemPowerWatts(measured: 3,
+                                             batteryWatts: 10,
+                                             externalConnected: true) == 3,
+               "system power keeps its independent sensor while connected to power")
+        expect(MetricFormat.systemPowerWatts(measured: nil,
+                                             batteryWatts: 10,
+                                             externalConnected: true) == nil,
+               "system power does not mirror adapter input while connected to power")
+        expect(MetricFormat.systemPowerWatts(measured: nil,
+                                             batteryWatts: -4,
+                                             externalConnected: false) == 4,
+               "battery discharge remains a valid system-power fallback")
+        expect(MetricFormat.systemPowerWatts(measured: nil,
+                                             batteryWatts: -4,
+                                             externalConnected: true) == nil,
+               "battery flow alone does not claim total system power while plugged in")
+
         // MARK: Peripheral battery helpers
 
         expect(PeripheralBatterySupport.percent(from: "87%") == 87,
@@ -534,7 +552,8 @@ struct MetricsTests {
         let bluetoothJSON = Data("""
         {"SPBluetoothDataType":[{"device_connected":[
           {"soundcore Space Q45":{"device_address":"F4:9D:8A:A2:4C:12","device_batteryLevelMain":"100%","device_minorType":"Headset"}},
-          {"AirPods Pro":{"device_address":"E5:04:BE:68:C2:93","device_batteryLevelCase":"88%","device_batteryLevelLeft":"92%","device_batteryLevelRight":"90%"}}
+          {"AirPods Pro":{"device_address":"E5:04:BE:68:C2:93","device_batteryLevelCase":"88%","device_batteryLevelLeft":"92%","device_batteryLevelRight":"90%"}},
+          {"Travel Pointer":{"device_address":"F0:00:00:00:00:01","device_minorType":"Mouse"}}
         ],"device_not_connected":[
           {"Old Mouse":{"device_address":"00:00:00:00:00:00","device_batteryLevelMain":"12%","device_minorType":"Mouse"}}
         ]}]}
@@ -552,6 +571,32 @@ struct MetricsTests {
                "peripheral battery uses the lowest connected AirPods component")
         expect(!bluetoothDevices.contains { $0.name == "Old Mouse" },
                "peripheral battery ignores disconnected Bluetooth devices")
+        let bluetoothKinds = PeripheralBatterySupport.bluetoothKindsByName(
+            fromSystemProfilerJSON: bluetoothJSON
+        )
+        expect(bluetoothKinds["travel pointer"] == .mouse,
+               "peripheral battery keeps the kind of connected devices without profiler charge data")
+        let gattDevices = PeripheralBatterySupport.mergingBluetoothReadings(
+            [
+                BluetoothBatteryReading(id: "pointer", name: "Travel Pointer", percent: 73),
+                BluetoothBatteryReading(id: "pointer", name: "Renamed Pointer", percent: 64),
+                BluetoothBatteryReading(id: "duplicate", name: "soundcore space q45", percent: 17),
+                BluetoothBatteryReading(id: "invalid", name: "Invalid Accessory", percent: 101),
+            ],
+            into: bluetoothDevices,
+            knownKinds: bluetoothKinds
+        )
+        expect(gattDevices.contains(PeripheralBatteryDevice(id: "BluetoothGATT:pointer",
+                                                            name: "Travel Pointer",
+                                                            percent: 73,
+                                                            kind: .mouse)),
+               "peripheral battery adds a standard Bluetooth battery reading with its known kind")
+        expect(gattDevices.first { $0.name.caseInsensitiveCompare("soundcore Space Q45") == .orderedSame }?.percent == 100,
+               "peripheral battery keeps richer profiler data instead of a duplicate standard reading")
+        expect(!gattDevices.contains { $0.name == "Renamed Pointer" },
+               "peripheral battery keeps one row per Bluetooth identity")
+        expect(!gattDevices.contains { $0.name == "Invalid Accessory" },
+               "peripheral battery rejects invalid standard Bluetooth percentages")
         let keyboard = PeripheralBatteryDevice(id: "keyboard",
                                                name: "Magic Keyboard",
                                                percent: 78,
@@ -831,6 +876,18 @@ struct MetricsTests {
         expect(MouseNavigationSupport.shouldPassThrough(
             bundleIdentifier: "org.mozilla.firefoxdeveloperedition"),
                "every channel of the browser family passes through via the prefix rule")
+        let registeredWebHandlers: Set<String> = ["com.example.browser", "com.apple.WebViewer"]
+        expect(MouseNavigationSupport.nativeWebHandlers(
+            urlHandlers: ["com.example.browser", "com.example.linkOnly"],
+            documentHandlers: ["com.example.browser", "com.example.documentOnly"]
+        ) == ["com.example.browser"],
+               "only apps registered for web URLs and web documents are treated as browsers")
+        expect(MouseNavigationSupport.shouldPassThrough(
+            bundleIdentifier: "com.example.browser", webURLHandlers: registeredWebHandlers),
+               "a third-party web handler keeps its native side button events")
+        expect(!MouseNavigationSupport.shouldPassThrough(
+            bundleIdentifier: "com.apple.WebViewer", webURLHandlers: registeredWebHandlers),
+               "a system web handler stays on the menu-command navigation path")
         expect(MouseNavigationSupport.shouldPassThrough(
             bundleIdentifier: "com.parallels.desktop.console"),
                "virtual machines keep the raw side buttons for the guest system")
@@ -2111,7 +2168,7 @@ struct MetricsTests {
         // per-release decision: this check fails on every version bump so the
         // decision above is made consciously, never by omission.
         let plistVersion = (NSDictionary(contentsOfFile: "Resources/Info.plist")?["CFBundleShortVersionString"] as? String) ?? ""
-        expect(plistVersion == "3.3.1",
+        expect(plistVersion == "3.3.2",
                "bumping the app version requires re-deciding the support prompt pin above")
         expect(SupportUpdateIntroInfo.releaseVersion == "3.3.0",
                "3.3.0 shows the deliberately curated community and support intro")
@@ -2124,7 +2181,8 @@ struct MetricsTests {
                "highlights tour shows once after updating to its pinned release")
         expect(!UpdateHighlightsInfo.shouldShow(appVersion: "3.3.1", lastSeenVersion: "3.3.1"),
                "highlights tour stays hidden after it is seen")
-        expect(!UpdateHighlightsInfo.shouldShow(appVersion: "3.3.0", lastSeenVersion: nil),
+        expect(!UpdateHighlightsInfo.shouldShow(appVersion: "3.3.0", lastSeenVersion: nil)
+               && !UpdateHighlightsInfo.shouldShow(appVersion: "3.3.2", lastSeenVersion: nil),
                "highlights tour never leaks into another release")
         expect(registeredDefaults[DefaultsKey.mixerLowerVolumeOnHeadphonesDisconnect] as? Bool == false,
                "headphone disconnect volume lowering is opt-in")
@@ -2600,6 +2658,13 @@ struct MetricsTests {
         expect(GlobalShortcut(keyCode: Int64(kVK_ISO_Section),
                               modifiers: [.control, .option, .command]).isValid,
                "the extra ISO key (paragraph/caret above Tab) is recordable as a shortcut")
+        GlobalShortcut.refreshLayoutLabels()
+        let backgroundISOKeyIsValid = DispatchQueue.global().sync {
+            GlobalShortcut(keyCode: Int64(kVK_ISO_Section),
+                           modifiers: [.control, .option, .command]).isValid
+        }
+        expect(backgroundISOKeyIsValid,
+               "layout-dependent shortcut labels are safe to read off the main thread")
 
         // The native full screen action, wired like the sixths: real strings,
         // a stable id, and no system-wide key claimed until someone asks.
@@ -3238,6 +3303,16 @@ struct MetricsTests {
                                           bundleURL: nil,
                                           exceptions: ["com.example.direct"]),
                "AutoQuit recognizes a direct bundle identifier exception")
+        expect(AutoQuitSupport.isExcepted(
+            bundleIdentifier: "com.parallels.winapp.0123456789abcdef.guest",
+            bundleURL: nil,
+            exceptions: ["com.parallels.desktop.console"]
+        ), "AutoQuit extends a guest-window host exception to its generated app helpers")
+        expect(!AutoQuitSupport.isExcepted(
+            bundleIdentifier: "com.parallels.winapp.0123456789abcdef.guest",
+            bundleURL: nil,
+            exceptions: ["com.example.unrelated"]
+        ), "AutoQuit does not protect a generated guest app without its host exception")
         let outerApp = FileManager.default.temporaryDirectory
             .appendingPathComponent("VorssaintAutoQuitTests-\(UUID().uuidString)")
             .appendingPathComponent("Container.app")
@@ -4361,6 +4436,26 @@ struct MetricsTests {
         expect(!manyBuilds.isCurrent("com.example.Player", token: firstRow)
                && !manyBuilds.isCurrent("com.example.Radio", token: secondRow),
                "one invalidation makes every row's build in flight stale")
+
+        var mixerRecovery = MixerEngineRecovery()
+        let firstAudioPath = MixerEngineRecovery.Configuration(objects: [41],
+                                                                outputDeviceUID: "speaker-a")
+        expect(mixerRecovery.allowsBuild("player", configuration: firstAudioPath),
+               "a new mixer audio path may build")
+        expect(mixerRecovery.recordFailure("player", configuration: firstAudioPath),
+               "a dead mixer engine gets one replacement")
+        expect(mixerRecovery.allowsBuild("player", configuration: firstAudioPath),
+               "the one replacement may build")
+        expect(!mixerRecovery.recordFailure("player", configuration: firstAudioPath)
+               && !mixerRecovery.allowsBuild("player", configuration: firstAudioPath),
+               "the same dead replacement stays untapped instead of muting forever")
+        let changedAudioPath = MixerEngineRecovery.Configuration(objects: [42],
+                                                                  outputDeviceUID: "speaker-a")
+        expect(mixerRecovery.allowsBuild("player", configuration: changedAudioPath),
+               "a new audio object gets its own recovery attempt")
+        mixerRecovery.clear("player")
+        expect(mixerRecovery.allowsBuild("player", configuration: firstAudioPath),
+               "an explicit mixer change re-enables the audio path")
 
         var refreshes = MixerRefreshCoordinator()
         expect(!refreshes.isReading, "a mixer that is not reading the audio devices holds no slot")
@@ -6715,26 +6810,44 @@ struct MetricsTests {
                                                         sourcePID: 20,
                                                         frontmostPID: 10,
                                                         targetIsMinimized: false,
+                                                        targetStartedMinimized: false,
                                                         ownPID: 99),
                "App Switcher focus retries can continue while the selected target app is still active")
         expect(SwitcherSupport.shouldContinueFocusRetry(targetPID: 10,
                                                         sourcePID: 20,
                                                         frontmostPID: 20,
                                                         targetIsMinimized: false,
+                                                        targetStartedMinimized: false,
                                                         ownPID: 99),
                "App Switcher focus retries can continue during the source-target handoff")
         expect(!SwitcherSupport.shouldContinueFocusRetry(targetPID: 10,
                                                          sourcePID: 20,
                                                          frontmostPID: 20,
                                                          targetIsMinimized: true,
+                                                         targetStartedMinimized: false,
                                                          ownPID: 99),
                "App Switcher focus retries stop once the selected target window was minimized")
+        expect(SwitcherSupport.shouldContinueFocusRetry(targetPID: 10,
+                                                        sourcePID: 20,
+                                                        frontmostPID: 20,
+                                                        targetIsMinimized: true,
+                                                        targetStartedMinimized: true,
+                                                        ownPID: 99),
+               "App Switcher retries restoration when the selected target started minimized")
         expect(!SwitcherSupport.shouldContinueFocusRetry(targetPID: 10,
                                                          sourcePID: 20,
                                                          frontmostPID: 30,
                                                          targetIsMinimized: false,
+                                                         targetStartedMinimized: false,
                                                          ownPID: 99),
                "App Switcher focus retries do not steal focus after the user moves to another app")
+        expect(!SwitcherSupport.shouldContinueFocusRetry(targetPID: 10,
+                                                         sourcePID: 20,
+                                                         frontmostPID: 30,
+                                                         targetIsMinimized: true,
+                                                         targetStartedMinimized: true,
+                                                         ownPID: 99),
+               "App Switcher does not restore a minimized target after the user moves to another app")
         expect(SwitcherSupport.shouldContinueAppActivationRetry(targetPID: 10,
                                                                 sourcePID: 20,
                                                                 frontmostPID: 20,
@@ -7087,6 +7200,11 @@ struct MetricsTests {
                "Homebrew package update status uses an update icon")
         expect(HomebrewOperation.Action.updateHomebrew.runningSystemImage == "arrow.triangle.2.circlepath",
                "Homebrew metadata refresh status uses a refresh icon")
+        expect(HomebrewOperation.Action.uninstall.clearsSelectionOnSuccess,
+               "Homebrew uninstall clears details for the package that left the installed list")
+        expect(!HomebrewOperation.Action.install.clearsSelectionOnSuccess
+                && !HomebrewOperation.Action.upgrade.clearsSelectionOnSuccess,
+               "Homebrew install and upgrade preserve package details after success")
         expect(HomebrewCommandBuilder.needsTerminalFallback(output: "sudo: a terminal is required to read the password"),
                "sudo terminal error triggers Homebrew terminal fallback")
         expect(HomebrewCommandBuilder.installerCommand == #"/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)""#,
@@ -7316,7 +7434,7 @@ struct MetricsTests {
             expectFormat(strings.homebrewConfirmUpgradeBodyFormat, ["@"], "\(prefix) Homebrew upgrade format")
             expect(!strings.homebrewUpgradeAll.isEmpty, "\(prefix) Homebrew update all title is present")
             expect(!strings.homebrewUpdateHomebrew.isEmpty, "\(prefix) Homebrew update Homebrew title is present")
-            expect(!strings.switcherIconRowMode.isEmpty, "\(prefix) App Switcher icon-row title is present")
+            expectFormat(strings.switcherIconRowMode, ["@"], "\(prefix) App Switcher icon-row title format")
             expect(!strings.switcherIconRowModeCaption.isEmpty, "\(prefix) App Switcher icon-row caption is present")
             expect(!strings.switcherSimpleMode.isEmpty, "\(prefix) App Switcher simple-mode title is present")
             expect(!strings.switcherSimpleModeCaption.isEmpty, "\(prefix) App Switcher simple-mode caption is present")
@@ -7518,6 +7636,82 @@ struct MetricsTests {
         let afterReset = MetricFormat.netSpeed(previous: fast, current: slow, elapsed: 2)
         expect(afterReset.down == 0 && afterReset.up == 0, "counter reset yields zero")
 
+        var networkFallback = NetworkCounterFallback()
+        let firstFrozenDownload = networkFallback.observe(
+            previous: NetworkCounters(received: 1_000, sent: 500),
+            current: NetworkCounters(received: 1_000, sent: 700)
+        )
+        expect(firstFrozenDownload.sampleProcesses && !firstFrozenDownload.useProcessDownload,
+               "first frozen inbound sample primes the process fallback")
+        let secondFrozenDownload = networkFallback.observe(
+            previous: NetworkCounters(received: 1_000, sent: 700),
+            current: NetworkCounters(received: 1_000, sent: 900)
+        )
+        expect(secondFrozenDownload.sampleProcesses && secondFrozenDownload.useProcessDownload,
+               "second frozen inbound sample activates the process fallback")
+        let fallbackIdle = networkFallback.observe(
+            previous: NetworkCounters(received: 1_000, sent: 900),
+            current: NetworkCounters(received: 1_000, sent: 900)
+        )
+        expect(!fallbackIdle.sampleProcesses && fallbackIdle.useProcessDownload,
+               "active fallback does no process work while interface traffic is idle")
+        let inboundRecovered = networkFallback.observe(
+            previous: NetworkCounters(received: 1_000, sent: 900),
+            current: NetworkCounters(received: 1_100, sent: 950)
+        )
+        expect(!inboundRecovered.sampleProcesses && !inboundRecovered.useProcessDownload,
+               "moving inbound counters restore the lightweight interface reader")
+        _ = networkFallback.observe(
+            previous: NetworkCounters(received: 1_100, sent: 950),
+            current: NetworkCounters(received: 1_100, sent: 1_000)
+        )
+        let counterResetFallback = networkFallback.observe(
+            previous: NetworkCounters(received: 1_100, sent: 1_000),
+            current: NetworkCounters(received: 10, sent: 20)
+        )
+        expect(!counterResetFallback.sampleProcesses && !counterResetFallback.useProcessDownload,
+               "interface counter resets clear fallback suspicion")
+
+        let fallbackCounters = [
+            NetworkCounters(received: 1_000, sent: 500),
+            NetworkCounters(received: 1_000, sent: 700),
+            NetworkCounters(received: 1_000, sent: 900),
+            NetworkCounters(received: 1_200, sent: 1_000),
+        ]
+        let fallbackProcessSamples = [
+            [NetworkProcessSample(pid: 10, name: "Browser", bytesIn: 1_000, bytesOut: 500)],
+            [NetworkProcessSample(pid: 10, name: "Browser", bytesIn: 5_000, bytesOut: 700)],
+        ]
+        var fallbackCounterIndex = 0
+        var fallbackProcessIndex = 0
+        let fallbackSampler = NetworkSampler(counterReader: {
+            defer { fallbackCounterIndex += 1 }
+            return fallbackCounters[fallbackCounterIndex]
+        }, processReader: {
+            defer { fallbackProcessIndex += 1 }
+            return fallbackProcessSamples[fallbackProcessIndex]
+        })
+        let fallbackBaseline = fallbackSampler.sample(now: 0)
+        let fallbackProbe = fallbackSampler.sample(now: 2)
+        let fallbackReading = fallbackSampler.sample(now: 4)
+        let recoveredReading = fallbackSampler.sample(now: 6)
+        expect(fallbackBaseline.downBytesPerSec == nil && fallbackBaseline.upBytesPerSec == nil,
+               "network sampler first reading remains a baseline")
+        expect(fallbackProbe.downBytesPerSec == 0 && fallbackProbe.upBytesPerSec == 100,
+               "first frozen inbound sample keeps interface output while priming fallback")
+        expectClose(fallbackReading.downBytesPerSec ?? -1, 2_000,
+                    "network sampler replaces frozen interface download with process traffic")
+        expectClose(fallbackReading.upBytesPerSec ?? -1, 100,
+                    "network sampler keeps the lightweight interface upload counter")
+        expect(fallbackReading.totalDown == 4_000 && fallbackReading.totalUp == 400,
+               "network fallback accumulates process download and interface upload totals")
+        expectClose(recoveredReading.downBytesPerSec ?? -1, 100,
+                    "network sampler returns to interface download after counter recovery")
+        expect(recoveredReading.totalDown == 4_200 && recoveredReading.totalUp == 500,
+               "network totals continue across fallback recovery")
+        expect(fallbackProcessIndex == 2,
+               "network sampler invokes the process reader only for suspect interface samples")
+
         let nettopCSV = """
         time,,bytes_in,bytes_out,
         08:31:45.865507,Codex (Service).78844,78288,477660,
@@ -7553,6 +7747,8 @@ struct MetricsTests {
                     "nettop stream parser does not publish cumulative bytes")
         expect(NetworkProcessSupport.nettopArguments == ["-P", "-d", "-x", "-J", "bytes_in,bytes_out", "-L", "1", "-s", "1"],
                "nettop per-app sampling asks for one cumulative section and computes deltas in app")
+        expect(NetworkProcessSupport.externalNettopArguments == ["-P", "-d", "-x", "-t", "external", "-J", "bytes_in,bytes_out", "-L", "1", "-s", "1"],
+               "network fallback samples only external process traffic")
 
         var networkDelta = NetworkProcessDeltaTracker(maxGap: 10)
         let baselineNetwork = [
@@ -8249,7 +8445,7 @@ struct MetricsTests {
                    "no em-dash in visible menu bar appearance strings (\(language.rawValue))")
             let appUpdateValues = Mirror(reflecting: FeatureStrings.appUpdates(language)).children
                 .compactMap { $0.value as? String }
-            expect(appUpdateValues.count == 29 && appUpdateValues.allSatisfy { !$0.isEmpty },
+            expect(appUpdateValues.count == 32 && appUpdateValues.allSatisfy { !$0.isEmpty },
                    "every app update string is set for \(language.rawValue)")
             expect(appUpdateValues.allSatisfy { !$0.contains("—") },
                    "no em-dash in visible app update strings (\(language.rawValue))")
@@ -8513,6 +8709,75 @@ struct MetricsTests {
                "the quick toggles alone keep the quick tools page")
         expect(pageVisible(.clipboard, available: [.finderCutPaste]),
                "the image paste option keeps the Clipboard page available")
+        expect(AppFeature.allCases.allSatisfy { feature in
+            let destination = feature.settingsDestination
+            let gate = FeatureVisibilitySupport.features(for: destination.page)
+            return gate.isEmpty || gate.contains(feature)
+        }, "every feature destination is either always visible or gated by that feature")
+        expect(AppFeature.allCases.allSatisfy { $0.settingsDestination.hasValidSectionAnchor },
+               "every feature anchor belongs to its destination page")
+        expect(Set(AppFeature.allCases.compactMap(\.settingsDestination.sectionAnchor))
+                == Set(SettingsSectionAnchor.allCases),
+               "every declared Settings section anchor is used by a feature destination")
+        expect(AppFeature.windowMaximizer.settingsDestination
+                == FeatureSettingsDestination(.general, sectionAnchor: .panelConfiguration)
+                && AppFeature.mixer.settingsDestination
+                == FeatureSettingsDestination(.general, sectionAnchor: .panelConfiguration)
+                && AppFeature.cleaningMode.settingsDestination
+                == FeatureSettingsDestination(.general, sectionAnchor: .panelConfiguration),
+               "panel-oriented features land on General panel configuration")
+        expect(AppFeature.musicBlock.settingsDestination
+                == FeatureSettingsDestination(.general, sectionAnchor: .musicBlocking)
+                && AppFeature.soundOutputSwitcher.settingsDestination
+                == FeatureSettingsDestination(.shortcuts, sectionAnchor: .soundOutputSwitcher)
+                && AppFeature.diskImageInstaller.settingsDestination
+                == FeatureSettingsDestination(.features),
+               "features without dedicated pages use explicit nearest Settings destinations")
+        expect(!AppFeature.diskImageInstaller.hasNavigableSettingsDestination
+                && AppFeature.allCases.filter { $0 != .diskImageInstaller }
+                    .allSatisfy(\.hasNavigableSettingsDestination),
+               "a feature without a separate configuration surface does not show a dead-end link")
+        expect(AppFeature.monitorCPU.settingsDestination == FeatureSettingsDestination(.monitor)
+                && AppFeature.fanControl.settingsDestination
+                == FeatureSettingsDestination(.monitor, sectionAnchor: .fanControl),
+               "shared monitor destinations distinguish the dedicated fan controls")
+        let settingsRouter = SettingsRouter.shared
+        var settingsRequestCount = 0
+        var settingsRequestsPublishedReady = true
+        let settingsRequestObservation = settingsRouter.$requestID
+            .dropFirst()
+            .sink { requestID in
+                settingsRequestCount += 1
+                settingsRequestsPublishedReady =
+                    settingsRequestsPublishedReady
+                    && settingsRouter.pendingDestinationRequest?.id == requestID
+            }
+        let repeatedDestination = FeatureSettingsDestination(.mouse, sectionAnchor: .middleClick)
+        settingsRouter.request(repeatedDestination)
+        let firstSettingsRequestID = settingsRouter.requestID
+        settingsRouter.request(repeatedDestination)
+        expect(settingsRouter.destination == repeatedDestination
+                && settingsRouter.page == repeatedDestination.page,
+               "a Settings destination request selects its page and preserves its anchor")
+        expect(settingsRequestCount == 2 && settingsRouter.requestID != firstSettingsRequestID,
+               "repeated requests for the same Settings destination remain observable")
+        expect(settingsRequestsPublishedReady,
+               "a Settings request is ready to consume when its request identity is published")
+        let repeatedSettingsRequestID = settingsRouter.requestID
+        settingsRouter.consumeDestinationRequest(id: firstSettingsRequestID)
+        expect(settingsRouter.pendingDestinationRequest?.id == repeatedSettingsRequestID,
+               "consuming an older Settings request cannot clear a newer request")
+        settingsRouter.consumeDestinationRequest(id: repeatedSettingsRequestID)
+        expect(settingsRouter.pendingDestinationRequest == nil,
+               "a handled Settings destination request is cleared")
+        settingsRouter.cleanerTool = "tool-id"
+        settingsRouter.request(FeatureSettingsDestination(.cleaner))
+        expect(settingsRouter.page == .cleaner && settingsRouter.cleanerTool == "tool-id",
+               "requesting Cleaner Settings preserves its one-shot tool hint")
+        settingsRouter.consumeDestinationRequest(id: settingsRouter.requestID)
+        settingsRouter.cleanerTool = nil
+        settingsRouter.page = .general
+        withExtendedLifetime(settingsRequestObservation) {}
 
         // MARK: Display brightness (DDC/CI helpers)
 
@@ -10409,6 +10674,8 @@ struct MetricsTests {
 
         let capsMapping = SuperKeyMapping(source: SuperKeySupport.capsLockUsage,
                                           destination: SuperKeySupport.triggerUsage)
+        let noActionMapping = SuperKeyMapping(source: SuperKeySupport.noActionUsage,
+                                              destination: SuperKeySupport.triggerUsage)
         let foreignMapping = SuperKeyMapping(source: 0x700000064, destination: 0x700000035)
         expect(SuperKeySupport.mappings(enablingSuperKey: true, existing: []) == [capsMapping],
                "turning the key on maps caps lock to the key it arrives as")
@@ -10423,6 +10690,14 @@ struct MetricsTests {
                                                                    destination: 0x700000029)])
                 == [capsMapping],
                "caps lock never carries two mappings at once")
+        expect(SuperKeySupport.mappings(enablingSuperKey: true,
+                                        existing: [foreignMapping],
+                                        includeNoAction: true)
+                == [capsMapping, noActionMapping, foreignMapping]
+                && SuperKeySupport.mappings(enablingSuperKey: false,
+                                            existing: [capsMapping, noActionMapping, foreignMapping])
+                == [foreignMapping],
+               "the no-action mapping belongs to the feature and leaves with it")
         expect(SuperKeySupport.mappingArgument([capsMapping])
                 == "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":30064771129,\"HIDKeyboardModifierMappingDst\":30064771181}]}",
                "the mapping table goes out in the form the system takes")
@@ -10449,6 +10724,24 @@ struct MetricsTests {
         expect(SuperKeySupport.parseMappings("RegistryID  Key  Value\n100000a84 UserKeyMapping (null)").isEmpty
                 && SuperKeySupport.parseMappings("").isEmpty,
                "a keyboard with no mapping reads as none")
+
+        let disabledCaps = SuperKeyMapping(source: SuperKeySupport.capsLockUsage,
+                                           destination: SuperKeySupport.noActionUsage)
+        let disabledControl = SuperKeyMapping(source: 0x7000000E0,
+                                              destination: SuperKeySupport.noActionUsage)
+        expect(SuperKeySupport.canMapNoAction(from: [disabledCaps])
+                && !SuperKeySupport.canMapNoAction(from: [disabledControl])
+                && !SuperKeySupport.canMapNoAction(from: [disabledCaps, disabledControl])
+                && !SuperKeySupport.canMapNoAction(from: []),
+               "the shared no-action sentinel is recovered only when Caps Lock owns it")
+        let noActionReport = """
+        HIDKeyboardModifierMappingPairs = {
+          HIDKeyboardModifierMappingSrc = 30064771129;
+          HIDKeyboardModifierMappingDst = "-1";
+        }
+        """
+        expect(SuperKeySupport.parseMappings(noActionReport) == [disabledCaps],
+               "hidutil's signed no-action value keeps its unsigned HID meaning")
 
         var superKeyState = SuperKeySupport.State()
         expect(superKeyState.decide(.otherKey) == .pass,
@@ -11063,12 +11356,28 @@ struct MetricsTests {
         let noCountry = AppUpdatesSupport.storeLookupURL(bundleIDs: ["a.b"], country: nil)?
             .absoluteString ?? ""
         expect(!noCountry.contains("country="), "without a region the request carries none")
-        let lookupBody = Data(#"{"resultCount":1,"results":[{"bundleId":"a.b","version":"2.0","minimumOsVersion":"15.0","trackViewUrl":"https://x"}]}"#.utf8)
-        let lookupEntry = AppUpdatesSupport.parseStoreLookup(lookupBody)["a.b"]
+        let lookupBody = Data(#"{"resultCount":2,"results":[{"kind":"mac-software","bundleId":"a.b","version":"2.0","minimumOsVersion":"15.0","trackViewUrl":"https://x"},{"kind":"software","bundleId":"c.d","version":"9.0","minimumOsVersion":"12.0"}]}"#.utf8)
+        let lookupEntries = AppUpdatesSupport.parseStoreLookup(lookupBody)
+        let lookupEntry = lookupEntries["a.b"]
         expect(lookupEntry?.version == "2.0" && lookupEntry?.minimumOSVersion == "15.0",
                "the store answer is read back")
+        expect(lookupEntries["c.d"] == nil,
+               "another platform's listing is not the installed Mac app's version")
         expect(AppUpdatesSupport.parseStoreLookup(Data("not json".utf8)).isEmpty,
                "a broken store answer yields nothing instead of throwing")
+        let discoveredPaths = AppUpdatesSupport.applicationScanPaths(
+            folderPaths: ["/Applications/Editor.app",
+                          "/System/Applications/System Utility.app",
+                          "/Applications/Editor.app"],
+            spotlightPaths: ["/Users/test/Tools/Side App.app",
+                             "/Users/test/.Trash/Old.app",
+                             "/Users/test/Library/Services/Helper.app",
+                             "/Users/test/Projects/Sample/build/Debug.app",
+                             "/Users/test/Tools/Container.app/Contents/Helper.app",
+                             "/Volumes/Installer/Sample.app"],
+            homeDirectory: "/Users/test")
+        expect(discoveredPaths == ["/Applications/Editor.app", "/Users/test/Tools/Side App.app"],
+               "app discovery keeps installed apps and rejects system, transient, nested and duplicate copies")
 
         let noon = Date(timeIntervalSince1970: 1_800_000_000)
         expect(AppUpdatesSupport.nextCheckDate(lastCheck: noon, frequency: .off, now: noon) == nil,
@@ -11115,11 +11424,40 @@ struct MetricsTests {
         let caskJSON = #"{"formulae":[],"casks":[{"token":"editor","name":["Editor"],"installed":"1.129.0","artifacts":[{"app":["Source.app",{"target":"Editor.app"}],"target":"/Applications/Editor.app"},{"zap":[]}]}]}"#
         let parsedRecords = HomebrewParser.parseInstalledCaskRecords(caskJSON)
         expect(parsedRecords.count == 1 && parsedRecords[0].appFileNames == ["Editor.app"]
+                && parsedRecords[0].appPaths == ["/Applications/Editor.app"]
                 && parsedRecords[0].displayName == "Editor"
                 && parsedRecords[0].installedVersion == "1.129.0",
                "an installed package is traced to the final app name after a rename")
         expect(HomebrewParser.parseInstalledCaskRecords("garbage").isEmpty,
                "unreadable package output yields no records")
+        let managedPackage = HomebrewOwnershipSupport.packageManagingApplication(
+            atPath: "/Applications/Editor.app",
+            installed: parsedRecords
+        )
+        expect(managedPackage?.name == "editor" && managedPackage?.kind == .cask,
+               "the exact installed app path resolves to its package")
+        expect(HomebrewOwnershipSupport.packageManagingApplication(
+            atPath: "/Users/test/Desktop/Editor.app",
+            installed: parsedRecords,
+            homeDirectory: "/Users/test"
+        ) == nil,
+        "a same-named app outside the managed path never resolves to a package")
+        let legacyRecord = HomebrewCaskRecord(token: "legacy-tool",
+                                              displayName: "Legacy Tool",
+                                              installedVersion: "2.0",
+                                              appFileNames: ["Legacy Tool.app"])
+        expect(HomebrewOwnershipSupport.packageManagingApplication(
+            atPath: "/Users/test/Applications/Legacy Tool.app",
+            installed: [legacyRecord],
+            homeDirectory: "/Users/test"
+        )?.name == "legacy-tool",
+        "older catalog output falls back only inside a standard app folder")
+        expect(HomebrewOwnershipSupport.packageManagingApplication(
+            atPath: "/Applications/Legacy Tool.app",
+            installed: [legacyRecord, legacyRecord],
+            homeDirectory: "/Users/test"
+        ) == nil,
+        "ambiguous package ownership is never used for uninstall")
 
         expect(Defaults.utilityOrderWithAppUpdates("screenshot,quickLauncher,cleaner,homebrew")
                 == ["screenshot", "quickLauncher", "appUpdates", "cleaner", "homebrew"],
@@ -11134,13 +11472,15 @@ struct MetricsTests {
                "an empty saved order does not lose the entry")
         expect(Defaults.registeredDefaults[DefaultsKey.appUpdatesCheckFrequency] as? String == "off",
                "the background check starts off")
-        expect(Defaults.registeredDefaults[DefaultsKey.appUpdatesIncludeAppStore] as? Bool == true
+        expect(Defaults.registeredDefaults[DefaultsKey.appUpdatesIncludeHomebrewApps] as? Bool == true
+                && Defaults.registeredDefaults[DefaultsKey.appUpdatesIncludeAppStore] as? Bool == true
                 && Defaults.registeredDefaults[DefaultsKey.appUpdatesNotify] as? Bool == true
                 && Defaults.registeredDefaults[DefaultsKey.panelUtilityAppUpdates] as? Bool == true,
                "the app update defaults are registered")
         expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.appUpdatesCheckFrequency)
+                && SettingsBackupSupport.exportKeys().contains(DefaultsKey.appUpdatesIncludeHomebrewApps)
                 && !SettingsBackupSupport.exportKeys().contains(DefaultsKey.appUpdatesLastCheck),
-               "the schedule travels in a backup, the last check does not")
+               "app update preferences travel in a backup, the last check does not")
         expect(AppFeature.appUpdates.enabledKeys.isEmpty
                 && AppFeature.appUpdates.permissions == [.notifications, .appManagement]
                 && AppFeature.appUpdates.group == .tools,
@@ -11279,7 +11619,10 @@ struct MetricsTests {
         expect(CommandBarPreferences.source(ofRowID: "app.x") == .apps
                 && CommandBarPreferences.source(ofRowID: "menu.1.Bold") == .menus
                 && CommandBarPreferences.source(ofRowID: "folder./tmp") == .folders
-                && CommandBarPreferences.source(ofRowID: "action.screenshot") == .actions,
+                && CommandBarPreferences.source(ofRowID: "action.screenshot") == .actions
+                && CommandBarPreferences.emojiBrowserRowID == "emoji.browse"
+                && CommandBarPreferences.source(ofRowID: CommandBarPreferences.emojiBrowserRowID)
+                    == .emoji,
                "every row knows which source it came from")
         expect(CommandBarPreferences.isEnabled(.folders, disabledRaw: "folders,emoji") == false
                 && CommandBarPreferences.isEnabled(.apps, disabledRaw: "folders,emoji") == true
@@ -12228,6 +12571,48 @@ struct MetricsTests {
 
         // MARK: Command bar search and ranking
 
+        let firstBarPresentation = UUID()
+        let secondBarPresentation = UUID()
+        var barLifecycle = CommandBarPresentationLifecycle()
+        barLifecycle.beginHome(firstBarPresentation)
+        expect(barLifecycle.isLoadingHome,
+               "home presents with no stale runnable rows while its catalog hydrates")
+        barLifecycle.hide()
+        expect(!barLifecycle.completeHomeHydration(firstBarPresentation, isVisible: false),
+               "closing the panel cancels deferred hydration")
+
+        barLifecycle.beginHome(firstBarPresentation)
+        barLifecycle.beginHome(secondBarPresentation)
+        expect(!barLifecycle.completeHomeHydration(firstBarPresentation, isVisible: true)
+                && barLifecycle.completeHomeHydration(secondBarPresentation, isVisible: true),
+               "only the latest visible home presentation may receive deferred work")
+        expect(barLifecycle.acceptsHomeUpdates(secondBarPresentation, isVisible: true)
+                && !barLifecycle.acceptsHomeUpdates(firstBarPresentation, isVisible: true)
+                && !barLifecycle.acceptsHomeUpdates(secondBarPresentation, isVisible: false),
+               "background rows update only their still-visible home presentation")
+        expect(barLifecycle.acceptsSharedCacheCompletion(
+                    startedBy: firstBarPresentation,
+                    currentID: secondBarPresentation,
+                    isVisible: true),
+               "a shared cache completion refreshes the newer visible Home")
+        barLifecycle.hide()
+        expect(!barLifecycle.acceptsSharedCacheCompletion(
+                    startedBy: firstBarPresentation,
+                    currentID: secondBarPresentation,
+                    isVisible: true),
+               "a shared cache completion never mutates a hidden panel")
+
+        var deferredShortcut = CommandBarDeferredRowShortcut()
+        deferredShortcut.schedule("action.trash", for: firstBarPresentation)
+        expect(deferredShortcut.take(for: secondBarPresentation) == nil
+                && deferredShortcut.take(for: firstBarPresentation) == "action.trash"
+                && deferredShortcut.take(for: firstBarPresentation) == nil,
+               "a prompt shortcut runs once and only on the presentation that requested it")
+        deferredShortcut.schedule("action.trash", for: firstBarPresentation)
+        deferredShortcut.cancel()
+        expect(deferredShortcut.take(for: firstBarPresentation) == nil,
+               "closing or superseding a presentation cancels its prompt shortcut")
+
         expect(CommandBarSearch.normalized("  Brilho   da\tTela ") == "brilho da tela",
                "command bar folds case and collapses whitespace")
         expect(CommandBarSearch.matches(title: "Reunião com João", query: "reuniao joao"),
@@ -12326,6 +12711,7 @@ struct MetricsTests {
         // A combination tied to one row of the bar.
         let optionB = GlobalShortcut(keyCode: 11, modifiers: [.option, .command])
         let optionN = GlobalShortcut(keyCode: 45, modifiers: [.option, .command])
+        let commandPeriod = GlobalShortcut(keyCode: 47, modifiers: [.command])
         var bound = CommandBarRowShortcuts.setting(optionB, for: "app.bundle.a", in: [:])
         expect(bound["app.bundle.a"] == optionB, "a row answers to the keys it was given")
         bound = CommandBarRowShortcuts.setting(optionB, for: "app.bundle.b", in: bound)
@@ -12341,6 +12727,11 @@ struct MetricsTests {
                "a bare letter is never taken from every app on the Mac")
         expect(CommandBarRowShortcuts.decode(CommandBarRowShortcuts.encode(bound)) == bound,
                "the bindings survive a round trip through storage")
+        let emojiBinding = CommandBarRowShortcuts.setting(
+            commandPeriod, for: CommandBarPreferences.emojiBrowserRowID, in: [:])
+        expect(CommandBarRowShortcuts.key(for: commandPeriod, in: emojiBinding)
+                == CommandBarPreferences.emojiBrowserRowID,
+               "the Emoji browser row can own a global shortcut like any other row")
         var full: [String: GlobalShortcut] = [:]
         for index in 0..<CommandBarRowShortcuts.limit {
             full["row.\(index)"] = GlobalShortcut(keyCode: Int64(index), modifiers: [.control])

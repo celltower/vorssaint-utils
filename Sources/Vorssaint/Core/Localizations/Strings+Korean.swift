@@ -212,7 +212,7 @@ extension Strings {
         switcherEnableCaption: "앱과 윈도우를 전환합니다. 최소화한 윈도우와 같은 앱의 여러 윈도우도 지원합니다.",
         switcherUsageHint: "단축키를 누른 채 이동하고 놓으면 윈도우가 활성화됩니다. Shift 또는 ←로 뒤로 이동하고, W로 윈도우를 닫고, Q로 앱을 종료하며, Esc로 취소합니다.",
         switcherNoWindows: "열린 윈도우가 없습니다",
-        switcherIconRowMode: "⌘Tab을 큰 아이콘으로 표시",
+        switcherIconRowMode: "%@을 큰 아이콘으로 표시",
         switcherIconRowModeCaption: "앱마다 하나의 아이콘을 표시하고 그 위에 해당 앱의 윈도우 미리보기를 표시합니다.",
         switcherSimpleMode: "간단한 앱 전환기",
         switcherSimpleModeCaption: "미리보기와 전환기의 화면 녹화 기능을 사용하지 않고 앱 아이콘과 윈도우 제목을 표시합니다.",
@@ -913,6 +913,7 @@ extension Strings {
         invertVerticalScroll: "세로 스크롤 반전",
         invertHorizontalScroll: "가로 스크롤 반전",
         switcherShowShortcutHints: "단축키 힌트 보기",
-        switcherShowShortcutHintsCaption: "아이콘 아래에 앱 및 윈도우 단축키를 표시합니다."
+        switcherShowShortcutHintsCaption: "아이콘 아래에 앱 및 윈도우 단축키를 표시합니다.",
+        uninstallerHomebrewPackageFormat: "%@도 Homebrew에서 제거됩니다."
     )
 }

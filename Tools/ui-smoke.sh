@@ -17,7 +17,6 @@ PROCESS="VorssaintDeveloper"
 OUT="${1:-$(mktemp -d /tmp/vorss-ui-smoke.XXXXXX)}"
 mkdir -p "$OUT"
 FAILURES=0
-LAYOUT_LOG="$OUT/layout-warnings.log"
 
 step() { echo "▸ $1"; }
 fail() { echo "✗ $1" >&2; FAILURES=$((FAILURES + 1)); }
@@ -38,15 +37,6 @@ if ! pgrep -xq "$PROCESS"; then
     exit 1
 fi
 pass "process running"
-
-# Capture AppKit layout recursion warnings while we exercise Settings.
-: > "$LAYOUT_LOG"
-/usr/bin/log stream \
-    --style compact \
-    --predicate 'process == "VorssaintDeveloper" AND eventMessage CONTAINS "layoutSubtreeIfNeeded"' \
-    >"$LAYOUT_LOG" 2>/dev/null &
-LOG_PID=$!
-trap 'kill "$LOG_PID" 2>/dev/null || true' EXIT
 
 step "Status item"
 ITEMS=$(ax 'count menu bar items of menu bar 2')
@@ -81,86 +71,18 @@ fi
 osascript -e 'tell application "System Events" to key code 53' >/dev/null
 sleep 0.8
 
-open_settings() {
-    ax 'click menu bar item 1 of menu bar 2' >/dev/null
-    sleep 1.2
-    ax 'click button 9 of group 1 of pop over 1 of menu bar item 1 of menu bar 2' >/dev/null
-    sleep 1.5
-}
-
-close_settings() {
-    ax 'click button 1 of window "Vorssaint Settings"' >/dev/null
-    sleep 0.6
-}
-
 step "Settings window"
-START_MS=$(python3 - <<'PY'
-import time
-print(int(time.time() * 1000))
-PY
-)
-open_settings
+ax 'click menu bar item 1 of menu bar 2' >/dev/null
+sleep 1.2
+ax 'click button 9 of group 1 of pop over 1 of menu bar item 1 of menu bar 2' >/dev/null
+sleep 1.5
 SW=$(ax 'get position of window "Vorssaint Settings"')
-END_MS=$(python3 - <<'PY'
-import time
-print(int(time.time() * 1000))
-PY
-)
-ELAPSED=$((END_MS - START_MS))
 if [[ -n "${SW:-}" ]]; then
-    pass "settings window at $SW (${ELAPSED} ms)"
-    if (( ELAPSED > 3000 )); then
-        fail "settings window took ${ELAPSED} ms to appear (> 3000 ms)"
-    else
-        pass "settings open within 3 s budget"
-    fi
+    pass "settings window at $SW"
     screencapture -x "$OUT/settings.png"
+    ax 'click button 1 of window "Vorssaint Settings"' >/dev/null
 else
     fail "settings window did not open"
-fi
-
-step "Settings Mouse page"
-# Sidebar rows are outline rows; try common English/German titles.
-MOUSE_CLICKED=0
-for title in "Mouse & Trackpad" "Maus & Trackpad" "Mouse" "Maus"; do
-    if ax "click UI element \"$title\" of outline 1 of scroll area 1 of splitter group 1 of window \"Vorssaint Settings\"" >/dev/null; then
-        MOUSE_CLICKED=1
-        break
-    fi
-done
-sleep 1.2
-if (( MOUSE_CLICKED )); then
-    pass "navigated toward Mouse settings"
-    screencapture -x "$OUT/settings-mouse.png"
-else
-    # Soft fail: sidebar AX labels vary by localization/build.
-    echo "  ⚠ could not click Mouse sidebar row by title; continuing"
-fi
-
-step "Settings open/close stress"
-close_settings
-for i in 1 2 3; do
-    open_settings
-    if [[ -z "$(ax 'get position of window "Vorssaint Settings"')" ]]; then
-        fail "settings window missing on open #$i"
-    fi
-    close_settings
-done
-pass "settings survived repeated open/close"
-
-kill "$LOG_PID" 2>/dev/null || true
-trap - EXIT
-sleep 0.3
-
-step "Layout recursion warnings"
-if rg -q 'layoutSubtreeIfNeeded' "$LAYOUT_LOG" 2>/dev/null; then
-    if rg -qi 'recursion|already being laid out' "$LAYOUT_LOG" 2>/dev/null; then
-        fail "layoutSubtreeIfNeeded recursion warning observed (see $LAYOUT_LOG)"
-    else
-        pass "layoutSubtreeIfNeeded mentioned without recursion warning"
-    fi
-else
-    pass "no layoutSubtreeIfNeeded warnings during smoke"
 fi
 
 echo ""

@@ -211,7 +211,7 @@ extension Strings {
         switcherEnableCaption: "アプリやウインドウを切り替えます。最小化したウインドウや同じアプリの複数ウインドウにも対応します。",
         switcherUsageHint: "ショートカットを押したまま移動し、放すとウインドウがアクティブになります。Shift または ← で戻る、W でウインドウを閉じ、Q でアプリを終了、Esc でキャンセルします。",
         switcherNoWindows: "開いているウインドウはありません",
-        switcherIconRowMode: "⌘Tab を大きなアイコンで表示",
+        switcherIconRowMode: "%@ を大きなアイコンで表示",
         switcherIconRowModeCaption: "アプリごとに1つのアイコンを表示し、その上にそのアプリのウインドウプレビューを表示します。",
         switcherSimpleMode: "シンプルなアプリスイッチャー",
         switcherSimpleModeCaption: "プレビューやスイッチャーによる画面収録を使わず、アプリのアイコンとウインドウのタイトルを表示します。",
@@ -912,6 +912,7 @@ extension Strings {
         invertVerticalScroll: "縦スクロールを反転",
         invertHorizontalScroll: "横スクロールを反転",
         switcherShowShortcutHints: "ショートカットのヒントを表示",
-        switcherShowShortcutHintsCaption: "アイコンの下にアプリとウインドウのショートカットを表示します。"
+        switcherShowShortcutHintsCaption: "アイコンの下にアプリとウインドウのショートカットを表示します。",
+        uninstallerHomebrewPackageFormat: "%@ も Homebrew から削除されます。"
     )
 }
