@@ -4,9 +4,9 @@
 import CoreGraphics
 import Foundation
 
-/// The mouse features that can be told to leave an app alone (issue #358).
-/// Each one keeps its OWN list, right under its switch in Settings: excepting
-/// an app from the wheel's glide must not also silence the side buttons there.
+/// The mouse behaviors that can be told to leave an app alone (issue #358).
+/// Both scrolling behaviors intentionally share one list; unrelated mouse
+/// actions keep their own lists.
 enum MouseExceptionScope: String, CaseIterable {
     case smoothScroll
     case scrollDirection
@@ -16,8 +16,7 @@ enum MouseExceptionScope: String, CaseIterable {
 
     var defaultsKey: String {
         switch self {
-        case .smoothScroll: return DefaultsKey.smoothScrollExceptions
-        case .scrollDirection: return DefaultsKey.scrollInverterExceptions
+        case .smoothScroll, .scrollDirection: return DefaultsKey.mouseScrollingExceptions
         case .navigation: return DefaultsKey.mouseNavigationExceptions
         case .buttonShortcuts: return DefaultsKey.mouseButtonExceptions
         case .middleClick: return DefaultsKey.middleClickExceptions

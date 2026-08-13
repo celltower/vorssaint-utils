@@ -8,10 +8,10 @@ import CoreGraphics
 /// Apps each mouse feature leaves alone (issue #358). Some apps drive
 /// themselves with the wheel and the extra buttons, so a glide or a swallowed
 /// click lands as a wrong command inside them; while one of those apps is the
-/// one being scrolled or clicked, the feature that named it stands down and
-/// the events reach the app exactly as the system produced them. Every
-/// feature keeps its own list, so leaving an app out of one never changes
-/// what the others do there.
+/// one being scrolled or clicked, the relevant behavior stands down and the
+/// events reach the app exactly as the system produced them. Smooth scrolling
+/// and direction inversion share one wheel list; unrelated mouse actions keep
+/// independent lists.
 ///
 /// The app is resolved from the window under the pointer, which is where
 /// macOS delivers both the wheel and the click, and falls back to the app in
@@ -65,6 +65,7 @@ final class MouseAppExceptions: ObservableObject {
 
     func reload() {
         let defaults = UserDefaults.standard
+        Defaults.migrateMouseScrollingExceptions(in: defaults)
         var nextLists: [MouseExceptionScope: [String]] = [:]
         var nextLookups: [MouseExceptionScope: Set<String>] = [:]
         for scope in MouseExceptionScope.allCases {

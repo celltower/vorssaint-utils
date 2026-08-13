@@ -52,7 +52,9 @@ enum DefaultsKey {
     // Machine state, never exported: whether the keyboard mapping is in place,
     // so a launch after a crash can take it back out.
     static let superKeyMappingApplied = "superKeyMappingApplied"
-    // One list of bundle ids per mouse feature: apps it leaves alone (issue #358).
+    // Bundle ids of apps each mouse behavior leaves alone (issue #358).
+    static let mouseScrollingExceptions = "mouseScrollingExceptions"
+    // Legacy split scrolling lists, retained for migration and old backups.
     static let smoothScrollExceptions = "smoothScrollExceptions"
     static let scrollInverterExceptions = "scrollInverterExceptions"
     static let mouseNavigationExceptions = "mouseNavigationExceptions"
@@ -696,6 +698,7 @@ enum Defaults {
         DefaultsKey.mouseButtonShortcuts: [String: String](),
         DefaultsKey.superKeyEnabled: false,
         DefaultsKey.superKeySoloAction: SuperKeySoloAction.none.rawValue,
+        DefaultsKey.mouseScrollingExceptions: [String](),
         DefaultsKey.smoothScrollExceptions: [String](),
         DefaultsKey.scrollInverterExceptions: [String](),
         DefaultsKey.mouseNavigationExceptions: [String](),
@@ -1083,6 +1086,7 @@ enum Defaults {
         migrateFanControlVisibility(in: defaults)
         migrateScrollInverterAxes(in: defaults)
         migrateSmoothScrollNumbers(in: defaults)
+        migrateMouseScrollingExceptions(in: defaults)
         defaults.register(defaults: registeredDefaults)
         defaults.register(defaults: AppFeature.availabilityDefaults)
         migrateLegacyMenuBarTemperatureMetric(in: defaults)
@@ -1118,6 +1122,23 @@ enum Defaults {
                                   sanitize: SmoothScrollSupport.sanitizedDuration)
         rewriteSmoothScrollNumber(in: defaults, key: DefaultsKey.smoothScrollAcceleration,
                                   sanitize: SmoothScrollSupport.sanitizedScrollAcceleration)
+    }
+
+    /// Smooth scrolling and direction inversion used to keep separate app
+    /// exception lists. Their union becomes the single mouse-scrolling list;
+    /// clearing the legacy values prevents a removed app from reappearing.
+    static func migrateMouseScrollingExceptions(in defaults: UserDefaults) {
+        let current = defaults.stringArray(forKey: DefaultsKey.mouseScrollingExceptions) ?? []
+        let smooth = defaults.stringArray(forKey: DefaultsKey.smoothScrollExceptions) ?? []
+        let direction = defaults.stringArray(forKey: DefaultsKey.scrollInverterExceptions) ?? []
+        let merged = sanitizedBundleIdentifierList(current + smooth + direction)
+
+        if !merged.isEmpty
+            || defaults.object(forKey: DefaultsKey.mouseScrollingExceptions) != nil {
+            defaults.set(merged, forKey: DefaultsKey.mouseScrollingExceptions)
+        }
+        defaults.removeObject(forKey: DefaultsKey.smoothScrollExceptions)
+        defaults.removeObject(forKey: DefaultsKey.scrollInverterExceptions)
     }
 
     private static func rewriteSmoothScrollNumber(in defaults: UserDefaults,

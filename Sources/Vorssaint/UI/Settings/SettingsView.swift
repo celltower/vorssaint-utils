@@ -676,7 +676,6 @@ struct MouseSettings: View {
                             Button(l10n.s.smoothScrollResetDefaults) {
                                 resetSmoothScrollFeel()
                             }
-                            MouseExceptionsList(scope: .smoothScroll)
                         }
                     }
                     if AppFeature.scrollInverter.isAvailable {
@@ -699,9 +698,6 @@ struct MouseSettings: View {
                                     .foregroundStyle(.green)
                             }
                         }
-                        if scrollDirectionEnabled {
-                            MouseExceptionsList(scope: .scrollDirection)
-                        }
                     } else {
                         Text(l10n.s.scrollDirectionUnavailableHint)
                             .font(.caption)
@@ -709,6 +705,9 @@ struct MouseSettings: View {
                         Button(l10n.s.scrollDirectionEnableButton) {
                             enableReverseScrollingFeature()
                         }
+                    }
+                    if mouseScrollingExceptionsVisible {
+                        MouseExceptionsList(scope: .smoothScroll)
                     }
                 }
             }
@@ -799,6 +798,11 @@ struct MouseSettings: View {
 
     private var mouseScrollingVisible: Bool {
         AppFeature.smoothScroll.isAvailable || AppFeature.scrollInverter.isAvailable
+    }
+
+    private var mouseScrollingExceptionsVisible: Bool {
+        (smoothScrollEnabled && AppFeature.smoothScroll.isAvailable)
+            || (scrollDirectionEnabled && AppFeature.scrollInverter.isAvailable)
     }
 
     private var scrollDirectionEnabled: Bool {

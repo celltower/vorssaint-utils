@@ -10503,8 +10503,14 @@ struct MetricsTests {
                     (Defaults.registeredDefaults[$0.defaultsKey] as? [String])?.isEmpty == true
                },
                "every feature's exception list registers empty, so they all start out working everywhere")
-        expect(Set(MouseExceptionScope.allCases.map(\.defaultsKey)).count == MouseExceptionScope.allCases.count,
-               "each feature keeps its own list, never a key shared with another")
+        expect(MouseExceptionScope.smoothScroll.defaultsKey
+                == MouseExceptionScope.scrollDirection.defaultsKey
+                && MouseExceptionScope.smoothScroll.defaultsKey
+                    == DefaultsKey.mouseScrollingExceptions,
+               "smooth scrolling and direction inversion share one app list")
+        expect(Set(MouseExceptionScope.allCases.map(\.defaultsKey)).count
+                == MouseExceptionScope.allCases.count - 1,
+               "only the two scrolling behaviors share an exception key")
         expect(MouseExceptionScope.smoothScroll.feature == .smoothScroll
                 && MouseExceptionScope.scrollDirection.feature == .scrollInverter
                 && MouseExceptionScope.navigation.feature == .mouseNavigation
@@ -10516,6 +10522,23 @@ struct MetricsTests {
         expect(Defaults.sanitizedBundleIdentifierList(["  com.example.a  ", "", "com.example.a", "com.example.b"])
                 == ["com.example.a", "com.example.b"],
                "the exception list drops blanks, spaces and repeats")
+
+        do {
+            let suiteName = "com.vorssaint.tests.mouse-scroll-exceptions.\(UUID().uuidString)"
+            let suite = UserDefaults(suiteName: suiteName)!
+            defer { suite.removePersistentDomain(forName: suiteName) }
+            suite.set(["com.example.shared"], forKey: DefaultsKey.mouseScrollingExceptions)
+            suite.set(["com.example.smooth"], forKey: DefaultsKey.smoothScrollExceptions)
+            suite.set(["com.example.direction", "com.example.shared"],
+                      forKey: DefaultsKey.scrollInverterExceptions)
+            Defaults.migrateMouseScrollingExceptions(in: suite)
+            expect(suite.stringArray(forKey: DefaultsKey.mouseScrollingExceptions)
+                    == ["com.example.shared", "com.example.smooth", "com.example.direction"],
+                   "legacy scrolling exception lists merge into one ordered list")
+            expect(suite.object(forKey: DefaultsKey.smoothScrollExceptions) == nil
+                    && suite.object(forKey: DefaultsKey.scrollInverterExceptions) == nil,
+                   "legacy scrolling lists are cleared after migration")
+        }
 
         let exceptionSet: Set<String> = ["com.example.modeler"]
         expect(MouseAppExceptionSupport.isExcepted("com.example.modeler", exceptions: exceptionSet)
@@ -10591,8 +10614,8 @@ struct MetricsTests {
             expect(values.allSatisfy { !$0.contains("—") },
                    "no em-dash in visible mouse exception strings (\(language.rawValue))")
             expect(Set(MouseExceptionScope.allCases.map { strings.caption(for: $0) }).count
-                    == MouseExceptionScope.allCases.count,
-                   "each list explains its own feature, never the same line twice (\(language.rawValue))")
+                    == MouseExceptionScope.allCases.count - 1,
+                   "only the two shared scrolling scopes reuse a caption (\(language.rawValue))")
         }
 
         for language in AppLanguage.allCases {

@@ -3,10 +3,9 @@
 
 import SwiftUI
 
-/// The "apps to leave alone" block that lives INSIDE a mouse feature's own
-/// section in Settings (issue #358), right under the switch it holds back, so
-/// the list is where the user is already looking. One list per feature: the
-/// same view with a different scope.
+/// The "apps to leave alone" block that lives inside the relevant mouse
+/// section in Settings (issue #358). Scrolling presents one shared list;
+/// unrelated mouse behaviors use the same view with independent scopes.
 ///
 /// It stays a single quiet row while nothing is listed, and comes up open when
 /// the feature already has exceptions, so a page with every mouse feature on
