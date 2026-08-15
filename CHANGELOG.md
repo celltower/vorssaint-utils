@@ -7,18 +7,28 @@ All notable changes to this project are documented here. The format follows
 ## [3.3.2]
 
 ### Summary
-Vorssaint 3.3.2 improves the Command Bar, Switcher, screenshots, Cleaning Mode,
-Scratchpad and audio reliability. It also refines app management, feature setup,
-Fan Control, Quit on close, network monitoring, power and peripheral battery
-readings, panel behavior and keyboard controls.
+Vorssaint 3.3.2 adds batch image conversion and local Command Bar scripts, and improves
+app discovery, unit conversions and full-screen switching. It also makes capture clearer
+and more flexible while preventing launch failures across window tools.
 
 ### Added
+- Media now converts images in batches with resizing, watermarks, renaming and
+  reusable profiles. Thanks to @ruvelro.
+- Saved Command Bar shortcuts can now run local scripts and show their results as
+  you type. Thanks to @tenbux.
 - Emoji can open directly from a shortcut assigned to its Command Bar row.
   Thanks to @MaximilianMauroner.
 
 ### Changed
-- App Updates now searches more places on your Mac and lets each source be turned
-  on or off. Thanks to @ruvelro.
+- Area recordings now keep the chosen region visible with a dimmed guide until
+  recording stops. Thanks to @lmilojevicc.
+- Copied screenshots now work as image files, so tools that expect a file path
+  can use them. Thanks to @lmilojevicc.
+- Screen recordings can now start without automatic zooms. Turn them off under
+  Screen recording while keeping manual zooms available in the editor.
+- App Updates now searches more places, offers source controls and opens the
+  product page for a lone selected store update.
+  Thanks to @ruvelro and @PathGao.
 - Installed Features rows open their Settings page and highlight the relevant
   controls. Thanks to @dorlugasigal.
 - Cleaning and the Uninstaller now explain how to grant Full Disk Access and
@@ -27,10 +37,37 @@ readings, panel behavior and keyboard controls.
   nothing reads them there. Thanks to @PathGao.
 - Showing Clipboard in the panel now sits on its own in Settings, since it keeps
   working while history capture is off. Thanks to @PathGao.
+- App lists in Settings now keep names on one line and align their add controls
+  consistently. Thanks to @PathGao.
 - The Command Bar now accepts Control-P and Control-N to move through results.
   Thanks to @theafox.
+- Foot conversions in the Command Bar now show localized feet and inches while
+  keeping small measurements precise. Thanks to @tenbux.
 
 ### Fixed
+- Window tools no longer quit Vorssaint at launch when the running app list
+  contains the same process twice.
+- The screenshot editor now lets you draw a new crop directly over the image.
+- Clipboard history now keeps large copied documents instead of silently
+  dropping text after 20,000 characters.
+- Window Layout now centers fixed-size windows and stops pending placements from
+  undoing Full Screen.
+- The feedback text cursor now lines up with the empty-field hint.
+- The recording countdown ring now drains smoothly instead of staying still
+  while only the number changes.
+- The Command Bar now finds installed apps kept outside the standard Applications
+  folders.
+- Keyboard light is now searchable from Settings and the Command Bar.
+  Thanks to @PathGao.
+- Copy text from screen now prioritizes the interface language, preventing Chinese
+  text from being returned as unreadable characters.
+- A disabled built-in display now turns back on when the last external screen
+  disconnects. Thanks to @mayaanhafeez.
+- Volume boost now smooths loud peaks before they play, preventing crackling at
+  high output levels. Thanks to @AB-boi.
+- External displays no longer receive repeated brightness checks after wake on
+  connections that cannot answer them, preventing sensitive hubs from dropping the picture.
+  Thanks to @danilo-alm.
 - Network download speed no longer stays at zero when the usual system counter
   misses received traffic.
 - Quit on close now extends an app exception to separate guest-app windows.
@@ -51,7 +88,9 @@ readings, panel behavior and keyboard controls.
   Thanks to @PathGao.
 - The App Switcher now shows its configured shortcut in the large icon mode label.
   Thanks to @liuxxxu.
+- The App Switcher now keeps its shortcut working after your Mac wakes from sleep.
 - The App Switcher now restores minimized windows when selected.
+- Full-screen video windows now remain available in App Switcher and Dock Preview.
 - The app no longer quits while typing when the Switcher's Windows shortcut uses a
   key whose label comes from the keyboard layout. Thanks to @eioz.
 - The Super key now works when Caps Lock is set to do nothing.

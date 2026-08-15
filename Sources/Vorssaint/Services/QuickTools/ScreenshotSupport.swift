@@ -20,6 +20,16 @@ enum ScreenshotSupport {
         allowedDelays.contains(raw) ? raw : 0
     }
 
+    /// Remaining stroke for the one-second countdown ring. Time drives the
+    /// value directly so a delayed frame catches up instead of restarting the
+    /// animation or leaving the ring frozen.
+    static func countdownRingProgress(elapsed: TimeInterval,
+                                      duration: TimeInterval = 0.92) -> CGFloat {
+        guard elapsed.isFinite, duration.isFinite, duration > 0 else { return 0 }
+        let fraction = min(max(elapsed / duration, 0), 1)
+        return CGFloat(1 - fraction)
+    }
+
     // MARK: - Scrolling capture
 
     /// A failed scroll target must never keep the capture alive forever or
@@ -234,6 +244,15 @@ enum ScreenshotSupport {
         return CGRect(x: min(origin.x, origin.x + dx),
                       y: min(origin.y, origin.y + dy),
                       width: abs(dx), height: abs(dy))
+    }
+
+    /// A full-image crop cannot move, so an interior drag must start a new
+    /// selection. Dragging outside an existing crop replaces it as well.
+    static func startsNewCropSelection(at point: CGPoint,
+                                       draft: CGRect,
+                                       within bounds: CGRect) -> Bool {
+        bounds.contains(point)
+            && (draft.standardized == bounds.standardized || !draft.contains(point))
     }
 
     static func clamp(_ rect: CGRect, to bounds: CGRect) -> CGRect {
@@ -485,6 +504,35 @@ enum ScreenshotSupport {
                                                        isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = folder.appendingPathComponent((name as NSString).lastPathComponent)
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    /// Keeps copied captures available long enough for paste targets that read
+    /// the file after accepting its URL from the pasteboard.
+    static func copiedFile(data: Data, name: String, directory: URL,
+                           now: Date = Date()) throws -> URL {
+        let manager = FileManager.default
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let cutoff = now.addingTimeInterval(-24 * 3600)
+        if let files = try? manager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey]
+        ) {
+            for file in files {
+                let values = try? file.resourceValues(
+                    forKeys: [.contentModificationDateKey, .isRegularFileKey])
+                if values?.isRegularFile == true,
+                   (values?.contentModificationDate ?? .distantFuture) < cutoff {
+                    try? manager.removeItem(at: file)
+                }
+            }
+        }
+        let safeName = (name as NSString).lastPathComponent
+        let uniqueName = uniqueFileName(safeName) { candidate in
+            manager.fileExists(atPath: directory.appendingPathComponent(candidate).path)
+        }
+        let url = directory.appendingPathComponent(uniqueName)
         try data.write(to: url, options: .atomic)
         return url
     }

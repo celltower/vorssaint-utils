@@ -42,6 +42,17 @@ enum BrightnessSupport {
     static let retryAttempts = 4
     static let replyLength = 11
 
+    /// Discovery keeps the normal number of reply chances but sends only one
+    /// request before each read. The read and retry pauses put every request
+    /// more than 50ms apart instead of sending pairs 10ms apart.
+    static func ddcProbeAttempts() -> Int {
+        retryAttempts + 1
+    }
+
+    static func ddcProbeWriteCycles(classifyingChannel: Bool) -> Int {
+        classifyingChannel ? 1 : writeCycles
+    }
+
     static let defaultKeyboardLightLevel: Float = 0.5
 
     static func keyboardLightOnLevel(lastNonzero: Float?) -> Float {
@@ -129,6 +140,33 @@ enum BrightnessSupport {
         return writeAccepted ? .writeOnly : .dead
     }
 
+    /// Identifies one physical monitor on one connection path. A monitor may
+    /// answer DDC directly but become write-only behind a particular hub, so
+    /// neither the display fingerprint nor the port is sufficient alone.
+    static func ddcPathKey(displayFingerprint: String,
+                           ioDisplayLocation: String) -> String? {
+        guard !displayFingerprint.isEmpty, !ioDisplayLocation.isEmpty else { return nil }
+        return "\(displayFingerprint)|\(ioDisplayLocation)"
+    }
+
+    /// Keeps recent write-only paths unique and bounded. Re-adding a path
+    /// moves it to the end, while a successful reply or rejected write removes
+    /// it so a changed connection can be classified again.
+    static func updatedWriteOnlyDDCPaths(_ stored: [String],
+                                         path: String,
+                                         isWriteOnly: Bool,
+                                         limit: Int = 16) -> [String] {
+        guard !path.isEmpty, limit > 0 else { return [] }
+        var updated = stored.filter { !$0.isEmpty && $0 != path }
+        if isWriteOnly { updated.append(path) }
+        return Array(updated.suffix(limit))
+    }
+
+    static func shouldProbeDDC(pathKey: String?, writeOnlyPaths: Set<String>) -> Bool {
+        guard let pathKey else { return true }
+        return !writeOnlyPaths.contains(pathKey)
+    }
+
     // MARK: - Display switching
 
     /// Turning off the final drawable display would leave no UI path to turn
@@ -136,6 +174,17 @@ enum BrightnessSupport {
     /// remain after the transaction.
     static func canDisableDisplay(activeDisplayIDs: Set<UInt32>, target: UInt32) -> Bool {
         activeDisplayIDs.contains(target) && activeDisplayIDs.count > 1
+    }
+
+    /// If a cable removal leaves the Mac with no drawable display, bring back
+    /// one display this app switched off. Prefer the built-in panel so the
+    /// portable Mac recovers without changing any other disabled display.
+    static func headlessRecoveryCandidates(activeDisplayIDs: Set<UInt32>,
+                                           managedDisabledIDs: Set<UInt32>,
+                                           builtInDisabledIDs: Set<UInt32>) -> [UInt32] {
+        guard activeDisplayIDs.isEmpty else { return [] }
+        let builtIn = managedDisabledIDs.intersection(builtInDisabledIDs)
+        return builtIn.sorted() + managedDisabledIDs.subtracting(builtIn).sorted()
     }
 
     // MARK: - Software dimming (gamma curve)

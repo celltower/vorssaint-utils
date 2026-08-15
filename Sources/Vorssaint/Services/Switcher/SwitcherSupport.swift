@@ -219,6 +219,10 @@ enum SwitcherSupport {
     /// Grid resolution used to classify window captures.
     static let captureAlphaGridSize = 8
 
+    static func firstValuesByPID<Value>(_ pairs: [(pid_t, Value)]) -> [pid_t: Value] {
+        Dictionary(pairs, uniquingKeysWith: { first, _ in first })
+    }
+
     static func usesIconRowLayout(iconRowMode: Bool, simpleMode: Bool) -> Bool {
         iconRowMode || simpleMode
     }
@@ -321,6 +325,19 @@ enum SwitcherSupport {
         return bundleIdentifier.hasPrefix("com.adobe.Audition")
             || bundleIdentifier.hasPrefix("com.adobe.AfterEffects")
             || bundleIdentifier.hasPrefix("com.adobe.PremierePro")
+    }
+
+    /// Some full-screen playback surfaces keep a nonstandard Accessibility
+    /// subrole. A screen-sized AX window is still a real switch target, while
+    /// smaller utility surfaces remain filtered. Compatibility-hosted windows
+    /// retain their existing role-based exception at every size.
+    static func isSwitchableNonstandardWindow(role: String?,
+                                              subrole: String?,
+                                              fillsScreen: Bool,
+                                              acceptsUndescribedSubroles: Bool) -> Bool {
+        guard role == "AXWindow" else { return false }
+        if acceptsUndescribedSubroles && subrole == "AXUnknown" { return true }
+        return fillsScreen && (subrole == "AXUnknown" || subrole == "AXFloatingWindow")
     }
 
     /// Finds the regular app that contains an accessory helper bundle.

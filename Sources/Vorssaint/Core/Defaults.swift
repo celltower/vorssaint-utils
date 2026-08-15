@@ -111,6 +111,10 @@ enum DefaultsKey {
     static let brightnessControlEnabled = "brightnessControlEnabled" // sliders for every display
     static let brightnessKeysEnabled = "brightnessKeysEnabled" // brightness keys act on the display under the pointer
     static let brightnessOSDEnabled = "brightnessOSDEnabled" // brightness adjustment overlay
+    // Per-monitor connection paths that accept brightness writes but never
+    // answer reads. Kept local so wake handling does not repeatedly probe a
+    // sensitive display path.
+    static let brightnessDDCWriteOnlyPaths = "brightnessDDCWriteOnlyPaths"
     // Displays this app switched off, so a run that ends without putting them
     // back can be repaired on the next start instead of needing a replug.
     static let displaysSwitchedOff = "displaysSwitchedOff"
@@ -346,6 +350,22 @@ enum DefaultsKey {
     static let mediaImageMaxDimension = "mediaImageMaxDimension"
     static let mediaImageFormat = "mediaImageFormat"
     static let mediaImageStripMetadata = "mediaImageStripMetadata"
+    static let mediaImageResizeKind = "mediaImageResizeKind"
+    static let mediaImageResizeWidth = "mediaImageResizeWidth"
+    static let mediaImageResizeHeight = "mediaImageResizeHeight"
+    static let mediaImageExactResizeMode = "mediaImageExactResizeMode"
+    static let mediaImageWatermarkKind = "mediaImageWatermarkKind"
+    static let mediaImageWatermarkText = "mediaImageWatermarkText"
+    static let mediaImageWatermarkLogoPath = "mediaImageWatermarkLogoPath"
+    static let mediaImageWatermarkPosition = "mediaImageWatermarkPosition"
+    static let mediaImageWatermarkOpacity = "mediaImageWatermarkOpacity"
+    static let mediaImageWatermarkMargin = "mediaImageWatermarkMargin"
+    static let mediaImageWatermarkScale = "mediaImageWatermarkScale"
+    static let mediaImageRenamePattern = "mediaImageRenamePattern"
+    static let mediaImageBackground = "mediaImageBackground"
+    static let mediaImagePreserveModificationDate = "mediaImagePreserveModificationDate"
+    static let mediaImageProfiles = "mediaImageProfiles"
+    static let mediaImageSelectedProfileID = "mediaImageSelectedProfileID"
     static let mediaTextAccurate = "mediaTextAccurate"
     static let mediaTextLanguageCorrection = "mediaTextLanguageCorrection"
 
@@ -453,6 +473,7 @@ enum DefaultsKey {
     static let recorderMicrophone = "recorderMicrophone"
     static let recorderSaveFolder = "recorderSaveFolder"
     static let recorderOpenEditor = "recorderOpenEditor"
+    static let recorderAutomaticZoom = "recorderAutomaticZoom"
     static let recorderGIFSize = "recorderGIFSize"
     static let recorderGIFFrameRate = "recorderGIFFrameRate"
     static let recorderEditorPresets = "recorderEditorPresets"
@@ -953,6 +974,22 @@ enum Defaults {
         DefaultsKey.mediaImageMaxDimension: 1600,
         DefaultsKey.mediaImageFormat: MediaImageFormat.jpeg.rawValue,
         DefaultsKey.mediaImageStripMetadata: true,
+        DefaultsKey.mediaImageResizeKind: MediaImageResizeKind.maxDimension.rawValue,
+        DefaultsKey.mediaImageResizeWidth: 1600,
+        DefaultsKey.mediaImageResizeHeight: 1200,
+        DefaultsKey.mediaImageExactResizeMode: MediaImageExactResizeMode.stretch.rawValue,
+        DefaultsKey.mediaImageWatermarkKind: MediaImageWatermarkKind.off.rawValue,
+        DefaultsKey.mediaImageWatermarkText: "",
+        DefaultsKey.mediaImageWatermarkLogoPath: "",
+        DefaultsKey.mediaImageWatermarkPosition: MediaImageWatermarkPosition.bottomRight.rawValue,
+        DefaultsKey.mediaImageWatermarkOpacity: 0.45,
+        DefaultsKey.mediaImageWatermarkMargin: 32,
+        DefaultsKey.mediaImageWatermarkScale: 0.18,
+        DefaultsKey.mediaImageRenamePattern: "",
+        DefaultsKey.mediaImageBackground: MediaImageBackground.transparent.rawValue,
+        DefaultsKey.mediaImagePreserveModificationDate: false,
+        DefaultsKey.mediaImageProfiles: "[]",
+        DefaultsKey.mediaImageSelectedProfileID: "",
         DefaultsKey.mediaTextAccurate: true,
         DefaultsKey.mediaTextLanguageCorrection: true,
         DefaultsKey.clipboardHistoryEnabled: false,
@@ -1011,6 +1048,7 @@ enum Defaults {
         DefaultsKey.recorderMicrophone: false,
         DefaultsKey.recorderSaveFolder: "",
         DefaultsKey.recorderOpenEditor: true,
+        DefaultsKey.recorderAutomaticZoom: true,
         DefaultsKey.recorderGIFSize: RecorderSupport.GIFSize.medium.rawValue,
         DefaultsKey.recorderGIFFrameRate: 12,
         DefaultsKey.recorderEditorPresets: Data(),

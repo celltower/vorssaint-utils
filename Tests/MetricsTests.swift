@@ -7,6 +7,7 @@ import Carbon.HIToolbox
 import Combine
 import Darwin
 import Foundation
+import ImageIO
 
 // Standalone unit tests for pure helpers. Compiled without IOKit or UI by
 // `./build.sh --test`, so they run fast and deterministically on any machine.
@@ -273,9 +274,16 @@ struct MetricsTests {
                "clipboard editing preserves intentional outer spacing")
         expect(ClipboardHistoryEditing.storableText(" \n\t ") == nil,
                "clipboard editing rejects an empty text item")
+        let largeClipboardText = String(repeating: "long copied text ", count: 10_000)
+        expect(ClipboardHistoryEditing.storableText(largeClipboardText) == largeClipboardText,
+               "clipboard history keeps copied documents larger than the old short-text bound")
         expect(ClipboardHistoryEditing.storableText(
             String(repeating: "a", count: ClipboardHistoryEditing.maxCharacters + 1)) == nil,
                "clipboard editing keeps the history text size bound")
+        let largeClipboardPreview = ClipboardHistoryEntry(text: largeClipboardText).preview
+        expect(largeClipboardPreview.hasSuffix("…")
+                && largeClipboardPreview.count <= ClipboardHistoryEditing.previewCharacters + 1,
+               "clipboard rows keep very large text previews bounded")
         let previewID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
         let nextPreviewID = UUID(uuidString: "00000000-0000-0000-0000-000000000102")!
         let updatedPreview = ClipboardHistoryEntry(id: previewID, text: "updated")
@@ -1991,6 +1999,42 @@ struct MetricsTests {
             bundleIdentifier: "com.example.editor",
             subrole: "AXFloatingWindow"),
                "App Switcher keeps floating windows from unrelated apps filtered")
+        expect(SwitcherSupport.isSwitchableNonstandardWindow(
+            role: "AXWindow",
+            subrole: "AXUnknown",
+            fillsScreen: true,
+            acceptsUndescribedSubroles: false),
+               "App Switcher accepts a screen-sized window with a nonstandard subrole")
+        expect(SwitcherSupport.isSwitchableNonstandardWindow(
+            role: "AXWindow",
+            subrole: "AXFloatingWindow",
+            fillsScreen: true,
+            acceptsUndescribedSubroles: false),
+               "App Switcher accepts a screen-sized floating playback surface")
+        expect(!SwitcherSupport.isSwitchableNonstandardWindow(
+            role: "AXWindow",
+            subrole: "AXUnknown",
+            fillsScreen: false,
+            acceptsUndescribedSubroles: false),
+               "App Switcher filters a smaller window with a nonstandard subrole")
+        expect(!SwitcherSupport.isSwitchableNonstandardWindow(
+            role: "AXGroup",
+            subrole: "AXUnknown",
+            fillsScreen: true,
+            acceptsUndescribedSubroles: false),
+               "App Switcher requires a real window role for a full-screen surface")
+        expect(!SwitcherSupport.isSwitchableNonstandardWindow(
+            role: "AXWindow",
+            subrole: "AXDialog",
+            fillsScreen: true,
+            acceptsUndescribedSubroles: false),
+               "App Switcher does not turn a screen-sized dialog into a playback window")
+        expect(SwitcherSupport.isSwitchableNonstandardWindow(
+            role: "AXWindow",
+            subrole: "AXUnknown",
+            fillsScreen: false,
+            acceptsUndescribedSubroles: true),
+               "App Switcher preserves hosted windows with custom chrome")
         expect(SwitcherSupport.sessionSourceItem(frontmostPID: nil,
                                                  focusedWindowID: nil,
                                                  items: [embeddedWindow]) == nil,
@@ -2702,6 +2746,11 @@ struct MetricsTests {
         expect(WindowLayoutGeometry.accepts(actualRect: .zero, targetRect: .zero,
                                             action: .fullScreen, anchorTolerance: 10) == false,
                "full screen never joins the frame-based gesture acceptance")
+        expect(WindowLayoutAction.center.targetCapability == .position
+                && WindowLayoutAction.fullScreen.targetCapability == .fullScreen
+                && WindowLayoutAction.maximize.targetCapability == .frame
+                && WindowLayoutAction.restore.targetCapability == .frame,
+               "window layout targets only the attributes each action changes")
 
         // MARK: Editing, navigation and upper function keys as shortcuts (#308)
 
@@ -3257,6 +3306,18 @@ struct MetricsTests {
                "Media video codec defaults to H.264")
         expect(registeredDefaults[DefaultsKey.mediaImageFormat] as? String == MediaImageFormat.jpeg.rawValue,
                "Media image format defaults to JPEG")
+        expect(registeredDefaults[DefaultsKey.mediaImageResizeKind] as? String == MediaImageResizeKind.maxDimension.rawValue,
+               "Media image resize defaults to max side")
+        expect(registeredDefaults[DefaultsKey.mediaImageExactResizeMode] as? String == MediaImageExactResizeMode.stretch.rawValue,
+               "Media image exact resize defaults to stretch for existing behavior")
+        expect(registeredDefaults[DefaultsKey.mediaImageWatermarkKind] as? String == MediaImageWatermarkKind.off.rawValue,
+               "Media image watermark starts off")
+        expect(registeredDefaults[DefaultsKey.mediaImageBackground] as? String == MediaImageBackground.transparent.rawValue,
+               "Media image background starts transparent")
+        expect(registeredDefaults[DefaultsKey.mediaImagePreserveModificationDate] as? Bool == false,
+               "Media image conversion does not preserve modification dates by default")
+        expect(registeredDefaults[DefaultsKey.mediaImageProfiles] as? String == "[]",
+               "Media image profiles start empty")
         expect((registeredDefaults[DefaultsKey.autoQuitExceptions] as? [String]) == Defaults.mandatoryAutoQuitExceptionBundleIDs,
                "Finder stays in the default auto-quit exception list")
         expect(registeredDefaults[DefaultsKey.panelCollapsedSections] == nil,
@@ -4126,6 +4187,158 @@ struct MetricsTests {
                "PDF output uses the pdf file extension")
         expect(MediaImageFormat.sanitized("bmp") == .jpeg,
                "Unknown image format falls back to JPEG")
+        expect(MediaImageResizeKind.sanitized("height") == .height,
+               "Image resize mode accepts height")
+        expect(MediaImageResizeKind.sanitized("wild") == .maxDimension,
+               "Unknown image resize mode falls back to max side")
+        expect(MediaImageExactResizeMode.sanitized("fill") == .fill
+               && MediaImageExactResizeMode.sanitized("wild") == .stretch,
+               "Image exact resize mode accepts fill and falls back to stretch")
+        expect(MediaImageBackground.sanitized("black") == .black
+               && MediaImageBackground.sanitized("mystery") == .transparent,
+               "Image backgrounds sanitize known values and fall back to transparent")
+        expect(MediaImageResizeMode.none.targetSize(for: CGSize(width: 123, height: 45))
+               == CGSize(width: 123, height: 45),
+               "Image resize can preserve source dimensions")
+        expect(MediaImageResizeMode.maxDimension(1000).targetSize(for: CGSize(width: 1920, height: 1080))
+               == CGSize(width: 1000, height: 563),
+               "Image max-side resize keeps aspect ratio")
+        expect(MediaImageResizeMode.width(800).targetSize(for: CGSize(width: 1600, height: 1200))
+               == CGSize(width: 800, height: 600),
+               "Image width resize calculates proportional height")
+        expect(MediaImageResizeMode.height(500).targetSize(for: CGSize(width: 1600, height: 1200))
+               == CGSize(width: 667, height: 500),
+               "Image height resize calculates proportional width")
+        expect(MediaImageResizeMode.exact(width: 321, height: 123).targetSize(for: CGSize(width: 1600, height: 1200))
+               == CGSize(width: 321, height: 123),
+               "Image exact resize uses custom dimensions")
+        let exactFill = MediaImageResizeMode.exact(width: 320, height: 180, mode: .fill)
+        expect(exactFill.exactMode == .fill
+               && exactFill.targetSize(for: CGSize(width: 1600, height: 1200)) == CGSize(width: 320, height: 180),
+               "Image exact resize stores fit/fill behavior without changing the target canvas")
+        expect(MediaSupport.imageRenderSizeIsSafe(CGSize(width: 9_000, height: 100)),
+               "Image render safety accepts a wide image without changing its dimensions")
+        expect(!MediaSupport.imageRenderSizeIsSafe(CGSize(width: 9_000, height: 9_000)),
+               "Image render safety rejects an allocation above the pixel budget")
+        expect(!MediaSupport.imageRenderSizeIsSafe(CGSize(width: 20_001, height: 1)),
+               "Image render safety rejects dimensions above the supported bound")
+        let rotatedImageProperties: [CFString: Any] = [
+            kCGImagePropertyPixelWidth: 640,
+            kCGImagePropertyPixelHeight: 480,
+            kCGImagePropertyOrientation: 6,
+        ]
+        expect(MediaSupport.imageDisplaySize(properties: rotatedImageProperties)
+               == CGSize(width: 480, height: 640),
+               "Image dimensions follow the source orientation used by the renderer")
+        let renameDate = Date(timeIntervalSince1970: 1_704_067_200) // 2024-01-01 UTC
+        let renamePattern = MediaImageRenamePattern("{name}-{counter:03}-{date}-{time}-{width}x{height}-{ext}")
+        expect(renamePattern.outputBaseName(for: URL(fileURLWithPath: "/tmp/Photo One.tiff"),
+                                            index: 7,
+                                            date: renameDate,
+                                            size: CGSize(width: 800, height: 600),
+                                            format: .png)
+               == "Photo One-007-20240101-000000-800x600-png",
+               "Image rename pattern expands date, time, extension and padded counter tokens")
+        expect(MediaImageRenamePattern("{datetime}-{index}").outputBaseName(for: URL(fileURLWithPath: "/tmp/a.jpg"),
+                                                                            index: 2,
+                                                                            date: renameDate,
+                                                                            size: CGSize(width: 1, height: 1),
+                                                                            format: .jpeg)
+               == "20240101-000000-2",
+               "Image rename pattern expands datetime")
+        expect(MediaImageRenamePattern("../bad/name").outputBaseName(for: URL(fileURLWithPath: "/tmp/a.jpg"),
+                                                                     index: 1,
+                                                                     size: CGSize(width: 1, height: 1),
+                                                                     format: .jpeg)
+               == "bad-name",
+               "Image rename pattern removes path separators")
+        let emojiName = MediaSupport.sanitizedFileBaseName(String(repeating: "🙂", count: 120),
+                                                           fileExtension: "png",
+                                                           uniquenessSuffixByteReservation: 4)
+        expect(emojiName.utf8.count <= 247,
+               "Image rename pattern output is capped by filesystem bytes, not character count")
+        let profileOptions = MediaImageOptions(quality: 0.8,
+                                               maxDimension: 1400,
+                                               format: .png,
+                                               stripMetadata: false,
+                                               resizeMode: .exact(width: 900, height: 600, mode: .fit),
+                                               watermark: MediaImageWatermark(kind: .text,
+                                                                              text: "Sample",
+                                                                              opacity: 0.5),
+                                               renamePattern: MediaImageRenamePattern("{name}-{index}"))
+        let encodedProfile = try? JSONEncoder().encode([MediaImageProfile(id: "profile-1",
+                                                                           name: "PNG web",
+                                                                           options: profileOptions)])
+        let decodedProfile = encodedProfile.flatMap { try? JSONDecoder().decode([MediaImageProfile].self, from: $0) }
+        expect(decodedProfile?.first?.options == profileOptions,
+               "Image profiles round-trip converter options")
+        let legacyResizeJSON = #"{"kind":"exact","maxDimension":1600,"width":320,"height":180}"#
+        let legacyResize = legacyResizeJSON.data(using: .utf8).flatMap { try? JSONDecoder().decode(MediaImageResizeMode.self, from: $0) }
+        expect(legacyResize?.exactMode == .stretch,
+               "Image resize profiles created before exact fit/fill decode with stretch")
+        let sanitizedProfiles = MediaSupport.sanitizedImageProfiles([
+            MediaImageProfile(id: "same", name: "  ", options: profileOptions),
+            MediaImageProfile(id: "same", name: " Work ", options: profileOptions),
+        ])
+        expect(sanitizedProfiles.count == 2
+               && sanitizedProfiles[0].name == "Profile 1"
+               && sanitizedProfiles[1].name == "Work"
+               && sanitizedProfiles[0].id != sanitizedProfiles[1].id,
+               "Image profiles sanitize empty names and duplicate IDs")
+        let uniqueDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vorssaint-media-unique-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: uniqueDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: uniqueDir) }
+        let firstImageOutput = MediaSupport.uniqueOutputURL(in: uniqueDir, baseName: "Export", fileExtension: "png")
+        FileManager.default.createFile(atPath: firstImageOutput.path, contents: Data([1]), attributes: nil)
+        expect(MediaSupport.uniqueOutputURL(in: uniqueDir, baseName: "Export", fileExtension: "png").lastPathComponent
+               == "Export 2.png",
+               "Image batch output names avoid overwriting existing files")
+        let reservedURL = MediaSupport.uniqueOutputURL(in: uniqueDir,
+                                                       baseName: "Reserved",
+                                                       fileExtension: "png",
+                                                       reservedPaths: [uniqueDir.appendingPathComponent("Reserved.png").standardizedFileURL.path])
+        expect(reservedURL.lastPathComponent == "Reserved 2.png",
+               "Image batch output names avoid paths already reserved in the current run")
+        let renamedOptions = MediaImageOptions(quality: 0.8,
+                                               maxDimension: 1600,
+                                               format: .png,
+                                               stripMetadata: true,
+                                               resizeMode: MediaImageResizeMode.none,
+                                               renamePattern: MediaImageRenamePattern("{name}-{index:02}"))
+        let renamedSingle = MediaSupport.imageOutputURL(
+            for: uniqueDir.appendingPathComponent("First.jpg"),
+            outputDirectory: uniqueDir,
+            options: renamedOptions,
+            index: 1,
+            outputSize: CGSize(width: 9000, height: 100))
+        let renamedBatch = MediaSupport.imageOutputURL(
+            for: uniqueDir.appendingPathComponent("Second.jpg"),
+            outputDirectory: uniqueDir,
+            options: renamedOptions,
+            index: 2,
+            outputSize: CGSize(width: 320, height: 200))
+        expect(renamedSingle.lastPathComponent == "First-01.png"
+               && renamedBatch.lastPathComponent == "Second-02.png",
+               "Image rename patterns apply to both single and batch outputs")
+
+        for language in AppLanguage.allCases {
+            let strings = MediaImageConverterStrings.localized(language)
+            let values = Mirror(reflecting: strings).children.compactMap { $0.value as? String }
+            expect(values.count == 56 && values.allSatisfy { !$0.isEmpty },
+                   "every image converter string is set for \(language.rawValue)")
+            expect(values.allSatisfy { !$0.contains("—") },
+                   "no em-dash in visible image converter strings (\(language.rawValue))")
+            expect(strings.filesSelectedFormat.contains("%d")
+                   && strings.profileDefaultNameFormat.contains("%d")
+                   && strings.savedBytesFormat.contains("%@")
+                   && strings.grewBytesFormat.contains("%@")
+                   && strings.batchSavedFormat.contains("%d")
+                   && strings.batchPartialFormat.filter { $0 == "%" }.count == 2
+                   && strings.batchSummaryHeaderFormat.filter { $0 == "%" }.count == 2
+                   && strings.batchSummaryItemFormat.filter { $0 == "%" }.count == 2,
+                   "image converter formats keep their arguments in \(language.rawValue)")
+        }
 
         let trim = MediaSupport.sanitizedTrim(start: -5, end: 3, assetDuration: 10)
         expect(trim == MediaTrimRange(start: 0, end: 3),
@@ -4217,6 +4430,12 @@ struct MetricsTests {
                "Media OCR language defaults include Turkish and English")
         expect(MediaSupport.recognitionLanguages(for: "ko") == ["ko-KR", "en-US"],
                "Media OCR language defaults include Korean and English")
+        expect(MediaSupport.recognitionLanguages(for: "zh-Hans") == ["zh-Hans", "en-US"],
+               "Media OCR language defaults include simplified Chinese and English")
+        expect(MediaSupport.recognitionLanguages(for: "zh-TW") == ["zh-Hant", "en-US"],
+               "Media OCR maps Taiwan Chinese to Vision traditional Chinese")
+        expect(MediaSupport.recognitionLanguages(for: "zh-HK") == ["zh-Hant", "en-US"],
+               "Media OCR maps Hong Kong Chinese to Vision traditional Chinese")
         expectClose(Defaults.sanitizedAppVolume(1.5), 1.5, "valid app volume is preserved")
         expectClose(Defaults.sanitizedAppVolume(3), 2, "high app volume clamps to boost maximum")
         expectClose(Defaults.sanitizedAppVolume(-1), 0, "negative app volume clamps to mute")
@@ -4811,6 +5030,104 @@ struct MetricsTests {
         }
         expect(stereoLinked,
                "both channels of a frame share one gain so the stereo image stays put")
+
+        var lookaheadInput = sine(amplitude: 1.5, frames: 9600)
+        let lookahead = BoostLookaheadLimiter(channels: 1)
+        _ = lookaheadInput.withUnsafeMutableBufferPointer { buffer in
+            lookahead.process(buffer.baseAddress!, frames: buffer.count, channels: 1,
+                              release: BoostLimiter.release(sampleRate: 48000))
+        }
+        let delayedSine = Array(repeating: Float(0), count: BoostLookaheadLimiter.lookaheadFrames)
+            + Array(sine(amplitude: BoostLimiter.ceiling,
+                         frames: 9600 - BoostLookaheadLimiter.lookaheadFrames))
+        expect(lookaheadInput.allSatisfy { abs($0) <= BoostLimiter.ceiling + 0.0001 },
+               "lookahead keeps every boosted sample inside the output range")
+        expect(zip(lookaheadInput.dropFirst(960), delayedSine.dropFirst(960)).allSatisfy {
+            abs($0 - $1) < 0.0001
+        }, "lookahead preserves a steady loud waveform instead of reshaping its peaks")
+
+        var quietLookahead = sine(amplitude: 0.6, frames: 2048)
+        let quietLookaheadSource = quietLookahead
+        let quietLookaheadLimiter = BoostLookaheadLimiter(channels: 1)
+        _ = quietLookahead.withUnsafeMutableBufferPointer { buffer in
+            quietLookaheadLimiter.process(buffer.baseAddress!, frames: buffer.count, channels: 1,
+                                          release: BoostLimiter.release(sampleRate: 48000))
+        }
+        expect(Array(quietLookahead.prefix(BoostLookaheadLimiter.lookaheadFrames))
+                == Array(repeating: 0, count: BoostLookaheadLimiter.lookaheadFrames)
+            && Array(quietLookahead.dropFirst(BoostLookaheadLimiter.lookaheadFrames))
+                == Array(quietLookaheadSource.dropLast(BoostLookaheadLimiter.lookaheadFrames)),
+               "quiet routed audio stays bit-identical after the fixed lookahead delay")
+
+        let lookaheadSource = sine(amplitude: 1.5, frames: 4096)
+        var wholeLookahead = lookaheadSource
+        let wholeLookaheadLimiter = BoostLookaheadLimiter(channels: 1)
+        _ = wholeLookahead.withUnsafeMutableBufferPointer { buffer in
+            wholeLookaheadLimiter.process(buffer.baseAddress!, frames: buffer.count, channels: 1,
+                                          release: BoostLimiter.release(sampleRate: 48000))
+        }
+        let chunkedLookaheadLimiter = BoostLookaheadLimiter(channels: 1)
+        var chunkedLookahead = [Float]()
+        for sourceChunk in [Array(lookaheadSource[0..<511]),
+                            Array(lookaheadSource[511..<1537]),
+                            Array(lookaheadSource[1537...])] {
+            var chunk = sourceChunk
+            _ = chunk.withUnsafeMutableBufferPointer { buffer in
+                chunkedLookaheadLimiter.process(buffer.baseAddress!, frames: buffer.count,
+                                                channels: 1,
+                                                release: BoostLimiter.release(sampleRate: 48000))
+            }
+            chunkedLookahead += chunk
+        }
+        expect(wholeLookahead == chunkedLookahead,
+               "lookahead produces the same signal across realtime buffer boundaries")
+
+        var impulseTrain = [Float](repeating: 0.2, count: 4096)
+        for frame in stride(from: 256, to: impulseTrain.count, by: 173) {
+            impulseTrain[frame] = frame.isMultiple(of: 2) ? 2 : -2
+        }
+        let impulseLimiter = BoostLookaheadLimiter(channels: 1)
+        _ = impulseTrain.withUnsafeMutableBufferPointer { buffer in
+            impulseLimiter.process(buffer.baseAddress!, frames: buffer.count, channels: 1,
+                                   release: BoostLimiter.release(sampleRate: 48000))
+        }
+        expect(impulseTrain.allSatisfy { abs($0) <= BoostLimiter.ceiling + 0.0001 },
+               "overlapping future peaks are attenuated before they reach the output")
+
+        var lookaheadStereo = [Float](repeating: 0, count: 4096 * 2)
+        for frame in 0..<4096 {
+            let value = Float(sin(2 * Double.pi * 440 * Double(frame) / 48000))
+            lookaheadStereo[frame * 2] = 1.5 * value
+            lookaheadStereo[frame * 2 + 1] = 0.75 * value
+        }
+        let stereoLookaheadLimiter = BoostLookaheadLimiter(channels: 2)
+        _ = lookaheadStereo.withUnsafeMutableBufferPointer { buffer in
+            stereoLookaheadLimiter.process(buffer.baseAddress!, frames: buffer.count / 2,
+                                           channels: 2,
+                                           release: BoostLimiter.release(sampleRate: 48000))
+        }
+        expect((BoostLookaheadLimiter.lookaheadFrames..<4096).allSatisfy { frame in
+            abs(lookaheadStereo[frame * 2 + 1] - lookaheadStereo[frame * 2] / 2) < 0.0001
+        }, "lookahead applies one gain to every channel in a frame")
+
+        var changedChannels = [Float](repeating: 0.4, count: 16)
+        let adaptableLimiter = BoostLookaheadLimiter(channels: 2)
+        let changedChannelsWereHandled = changedChannels.withUnsafeMutableBufferPointer { buffer in
+            adaptableLimiter.process(
+                buffer.baseAddress!, frames: 8, channels: 2,
+                release: BoostLimiter.release(sampleRate: 48000))
+        }
+        expect(changedChannelsWereHandled,
+               "a stream shape change reuses the preallocated lookahead storage")
+
+        var tooManyChannels = [Float](repeating: 1.2, count: 24)
+        let overflowWasHandled = tooManyChannels.withUnsafeMutableBufferPointer { buffer in
+            BoostLookaheadLimiter(channels: 2).process(
+                buffer.baseAddress!, frames: 8, channels: 3,
+                release: BoostLimiter.release(sampleRate: 48000))
+        }
+        expect(!overflowWasHandled && tooManyChannels.allSatisfy { $0 == 1.2 },
+               "a stream larger than the preallocated capacity falls through safely")
 
         var fallbackLimiter = BoostLimiter()
         let fallbackLimited = limited(sine(amplitude: 1.5, frames: 480),
@@ -6342,6 +6659,11 @@ struct MetricsTests {
         expect(QuickToolsSupport.hiddenIDs(from: QuickToolsSupport.serializeHiddenIDs(Set(["x", "y"])))
                    == Set(["x", "y"]),
                "launcher hidden set round-trips")
+        let repeatedProcessValues = SwitcherSupport.firstValuesByPID([(pid_t(1678), "first"),
+                                                                      (pid_t(1678), "duplicate"),
+                                                                      (pid_t(2048), "other")])
+        expect(repeatedProcessValues == [1678: "first", 2048: "other"],
+               "window enumeration keeps the first value when the system repeats a process")
         let groupedSwitcherItems = [
             SwitcherItem.window(id: 1, title: "One", appName: "Alpha", pid: 101,
                                 isOnScreen: true, frame: .zero),
@@ -8537,7 +8859,7 @@ struct MetricsTests {
                    "no em-dash in WhatsApp organizer strings (\(language.rawValue))")
             let recorderValues = Mirror(reflecting: FeatureStrings.recorder(language)).children
                 .compactMap { $0.value as? String }
-            expect(recorderValues.count == 115 && recorderValues.allSatisfy { !$0.isEmpty },
+            expect(recorderValues.count == 117 && recorderValues.allSatisfy { !$0.isEmpty },
                    "every screen recorder string is set for \(language.rawValue)")
             expect(recorderValues.allSatisfy { !$0.contains("—") },
                    "no em-dash in visible screen recorder strings (\(language.rawValue))")
@@ -8855,6 +9177,44 @@ struct MetricsTests {
                "accepted writes without replies keep a blind slider")
         expect(BrightnessSupport.channelOutcome(writeAccepted: false, replyParsed: false) == .dead,
                "rejected writes mean no DDC reaches the display (HDMI conversion)")
+        expect(BrightnessSupport.ddcProbeAttempts()
+                == BrightnessSupport.retryAttempts + 1
+                && BrightnessSupport.ddcProbeWriteCycles(classifyingChannel: true) == 1,
+               "channel discovery keeps its reply chances but sends one spaced write each")
+        expect(BrightnessSupport.ddcProbeAttempts()
+                == BrightnessSupport.retryAttempts + 1
+                && BrightnessSupport.ddcProbeWriteCycles(classifyingChannel: false)
+                == BrightnessSupport.writeCycles,
+               "answering channels retain their field-proven read and write retries")
+        let ddcPath = BrightnessSupport.ddcPathKey(
+            displayFingerprint: "1507:9218:245",
+            ioDisplayLocation: "IOService:/port/1")
+        expect(ddcPath == "1507:9218:245|IOService:/port/1",
+               "a DDC capability cache key binds the physical display to its connection path")
+        expect(BrightnessSupport.ddcPathKey(displayFingerprint: "1507:9218:245",
+                                            ioDisplayLocation: "") == nil,
+               "a display without a stable connection path is never cached")
+        let rememberedPaths = BrightnessSupport.updatedWriteOnlyDDCPaths(
+            ["old", "same", "other", "same"], path: "same", isWriteOnly: true, limit: 3)
+        expect(rememberedPaths == ["old", "other", "same"],
+               "remembering a write-only path deduplicates it and makes it newest")
+        expect(BrightnessSupport.updatedWriteOnlyDDCPaths(
+            rememberedPaths, path: "other", isWriteOnly: false, limit: 3) == ["old", "same"],
+               "a changed DDC result invalidates the remembered path")
+        expect(BrightnessSupport.updatedWriteOnlyDDCPaths(
+            ["one", "two", "three"], path: "four", isWriteOnly: true, limit: 3)
+            == ["two", "three", "four"],
+               "the write-only path cache remains bounded")
+        expect(!BrightnessSupport.shouldProbeDDC(
+            pathKey: ddcPath, writeOnlyPaths: [ddcPath!])
+                && BrightnessSupport.shouldProbeDDC(
+                    pathKey: "another", writeOnlyPaths: [ddcPath!])
+                && BrightnessSupport.shouldProbeDDC(
+                    pathKey: nil, writeOnlyPaths: [ddcPath!]),
+               "only the same physical display path skips future DDC probes")
+        expect(!SettingsBackupSupport.exportKeys().contains(
+            DefaultsKey.brightnessDDCWriteOnlyPaths),
+               "per-monitor DDC capability never travels in a settings backup")
         let oneDisplay = BrightnessSupport.DisplayTopology(online: [1], active: [1])
         let twoDisplays = BrightnessSupport.DisplayTopology(online: [1, 2], active: [1, 2])
         expect(!BrightnessSupport.shouldQueueRebuild(topology: oneDisplay, pending: oneDisplay),
@@ -8874,6 +9234,18 @@ struct MetricsTests {
                "the final active display can never be disabled")
         expect(!BrightnessSupport.canDisableDisplay(activeDisplayIDs: [1, 3], target: 8),
                "an inactive display cannot enter the disable path")
+        expect(BrightnessSupport.headlessRecoveryCandidates(
+            activeDisplayIDs: [3], managedDisabledIDs: [1], builtInDisabledIDs: [1]).isEmpty,
+               "an active external display preserves an intentionally disabled built-in panel")
+        expect(BrightnessSupport.headlessRecoveryCandidates(
+            activeDisplayIDs: [], managedDisabledIDs: [1, 4], builtInDisabledIDs: [1]) == [1, 4],
+               "losing the last active display tries the built-in panel before other managed displays")
+        expect(BrightnessSupport.headlessRecoveryCandidates(
+            activeDisplayIDs: [], managedDisabledIDs: [7, 4], builtInDisabledIDs: []) == [4, 7],
+               "a headless desktop Mac can recover one display switched off by this app")
+        expect(BrightnessSupport.headlessRecoveryCandidates(
+            activeDisplayIDs: [], managedDisabledIDs: [], builtInDisabledIDs: [1]).isEmpty,
+               "a display disabled elsewhere is never changed during headless recovery")
 
         expect(BrightnessSupport.ddcCommandDelay(nowMicroseconds: 1_000_000,
                                                  lastCommandEndMicroseconds: nil) == 0,
@@ -9615,6 +9987,20 @@ struct MetricsTests {
                                                        fromCenter: true)
         expect(centered == CGRect(x: 30, y: 40, width: 40, height: 20),
                "option grows the selection from the center")
+        let cropBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let cropDraft = CGRect(x: 120, y: 90, width: 400, height: 300)
+        expect(ScreenshotSupport.startsNewCropSelection(
+                    at: CGPoint(x: 300, y: 250), draft: cropBounds, within: cropBounds),
+               "dragging inside the initial full-image crop starts a new selection")
+        expect(!ScreenshotSupport.startsNewCropSelection(
+                    at: CGPoint(x: 300, y: 250), draft: cropDraft, within: cropBounds),
+               "dragging inside an adjusted crop keeps moving it")
+        expect(ScreenshotSupport.startsNewCropSelection(
+                    at: CGPoint(x: 700, y: 500), draft: cropDraft, within: cropBounds),
+               "dragging elsewhere in the image replaces an adjusted crop")
+        expect(!ScreenshotSupport.startsNewCropSelection(
+                    at: CGPoint(x: 900, y: 700), draft: cropDraft, within: cropBounds),
+               "a drag outside the image cannot start a crop")
         expect(ScreenshotSupport.isClick(from: CGPoint(x: 5, y: 5), to: CGPoint(x: 7, y: 8))
                 && !ScreenshotSupport.isClick(from: .zero, to: CGPoint(x: 12, y: 0)),
                "a tiny drag is a click, a real drag is not")
@@ -9851,6 +10237,29 @@ struct MetricsTests {
                 && FileManager.default.fileExists(atPath: unrelatedDrag.path),
                "temporary screenshot cleanup removes only app-owned drag directories")
         try? FileManager.default.removeItem(at: dragRoot)
+
+        let copyRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ScreenshotCopyTests-\(UUID().uuidString)", isDirectory: true)
+        let staleCopy = try? ScreenshotSupport.copiedFile(
+            data: dragData, name: "Old.png", directory: copyRoot)
+        if let staleCopy {
+            try? FileManager.default.setAttributes(
+                [.modificationDate: Date(timeIntervalSince1970: 1)],
+                ofItemAtPath: staleCopy.path)
+        }
+        let currentCopy = try? ScreenshotSupport.copiedFile(
+            data: dragData, name: "../Capture.png", directory: copyRoot,
+            now: Date(timeIntervalSince1970: 100_000))
+        let nextCopy = try? ScreenshotSupport.copiedFile(
+            data: dragData, name: "Capture.png", directory: copyRoot,
+            now: Date(timeIntervalSince1970: 100_000))
+        expect(staleCopy.map { !FileManager.default.fileExists(atPath: $0.path) } == true,
+               "copying a screenshot removes expired copied files")
+        expect(currentCopy?.lastPathComponent == "Capture.png"
+                && nextCopy?.lastPathComponent == "Capture 2.png"
+                && currentCopy.flatMap { try? Data(contentsOf: $0) } == dragData,
+               "copied screenshots stay as unique complete png files")
+        try? FileManager.default.removeItem(at: copyRoot)
 
         var counterList = [
             ScreenshotSupport.Annotation(tool: .counter, number: 1),
@@ -10961,6 +11370,25 @@ struct MetricsTests {
                "the launch at login choice travels with the settings backup")
         expect(backupKeys.contains(DefaultsKey.appearance),
                "the light or dark choice travels with the settings backup")
+        expect(Set([
+            DefaultsKey.mediaImageResizeKind,
+            DefaultsKey.mediaImageResizeWidth,
+            DefaultsKey.mediaImageResizeHeight,
+            DefaultsKey.mediaImageExactResizeMode,
+            DefaultsKey.mediaImageWatermarkKind,
+            DefaultsKey.mediaImageWatermarkText,
+            DefaultsKey.mediaImageWatermarkLogoPath,
+            DefaultsKey.mediaImageWatermarkPosition,
+            DefaultsKey.mediaImageWatermarkOpacity,
+            DefaultsKey.mediaImageWatermarkMargin,
+            DefaultsKey.mediaImageWatermarkScale,
+            DefaultsKey.mediaImageRenamePattern,
+            DefaultsKey.mediaImageBackground,
+            DefaultsKey.mediaImagePreserveModificationDate,
+            DefaultsKey.mediaImageProfiles,
+            DefaultsKey.mediaImageSelectedProfileID,
+        ]).isSubset(of: backupKeys),
+               "image converter choices and profiles travel with the settings backup")
         expect(backupKeys.contains(DefaultsKey.dockClickHide)
                 && backupKeys.contains(DefaultsKey.panelControlDockClickHide),
                "Dock hiding and its panel visibility travel with the settings backup")
@@ -11334,6 +11762,22 @@ struct MetricsTests {
         expect(AppUpdatesSupport.tokens(in: mergedRows, selection: []).isEmpty
                 && !AppUpdatesSupport.hasStoreSelection(in: mergedRows, selection: []),
                "an empty selection asks for nothing")
+        expect(AppUpdatesSupport.singleStorePage(in: mergedRows, selection: everything)
+                == "https://apps.apple.com/app",
+               "one ticked store row hands off to its own page, where its own button goes")
+        let secondStoreRow = AppUpdatesSupport.Item(id: "store:com.example.notes",
+                                                    source: .appStore,
+                                                    name: "Notes",
+                                                    installedVersion: "1.0",
+                                                    latestVersion: "2.0",
+                                                    token: nil,
+                                                    bundlePath: nil,
+                                                    storePage: "https://apps.apple.com/notes")
+        let twoStoreRows = mergedRows + [secondStoreRow]
+        expect(AppUpdatesSupport.singleStorePage(in: twoStoreRows,
+                                                 selection: Set(twoStoreRows.map(\.id))) == nil
+                && AppUpdatesSupport.singleStorePage(in: mergedRows, selection: []) == nil,
+               "two store rows, or none, have no single page to land on")
 
         let keptSelection = AppUpdatesSupport.reconciledSelection(
             previous: [mergedRows[0].id, "gone:row"],
@@ -11365,7 +11809,7 @@ struct MetricsTests {
                "another platform's listing is not the installed Mac app's version")
         expect(AppUpdatesSupport.parseStoreLookup(Data("not json".utf8)).isEmpty,
                "a broken store answer yields nothing instead of throwing")
-        let discoveredPaths = AppUpdatesSupport.applicationScanPaths(
+        let discoveredPaths = InstalledApps.applicationScanPaths(
             folderPaths: ["/Applications/Editor.app",
                           "/System/Applications/System Utility.app",
                           "/Applications/Editor.app"],
@@ -11377,7 +11821,7 @@ struct MetricsTests {
                              "/Volumes/Installer/Sample.app"],
             homeDirectory: "/Users/test")
         expect(discoveredPaths == ["/Applications/Editor.app", "/Users/test/Tools/Side App.app"],
-               "app discovery keeps installed apps and rejects system, transient, nested and duplicate copies")
+               "shared app discovery keeps installed apps and rejects system, transient, nested and duplicate copies")
 
         let noon = Date(timeIntervalSince1970: 1_800_000_000)
         expect(AppUpdatesSupport.nextCheckDate(lastCheck: noon, frequency: .off, now: noon) == nil,
@@ -11745,6 +12189,27 @@ struct MetricsTests {
                 .map { abs($0.value - 150) < 0.001 } == true,
                "a comma decimal converts where that is the custom")
 
+        expect(units("180 cm to ft") == "5 ft 10.87 in",
+               "a length converting to feet keeps precise feet and inches")
+        expect(units("1.75 m to ft") == "5 ft 8.9 in",
+               "a decimal length keeps its fractional inches")
+        expect(units("6 ft to ft") == "6 ft",
+               "a whole number of feet has no leftover inches shown")
+        expect(units("5.9999 ft to ft") == "6 ft",
+               "inches that round up to twelve carry into the next whole foot")
+        expect(units("2 cm to ft") == "0.0656 ft",
+               "a length below one foot stays precise instead of rounding to inches")
+        expect(units("-180 cm to ft") == "-5.91 ft",
+               "a negative length keeps the existing decimal format")
+        expect(units("180 cm to in") == "70.87 in",
+               "converting to inches specifically stays a plain decimal, unaffected by the feet formatting")
+        expect(CommandBarUnits.convert("180 cm para pes",
+                                       decimalSeparator: ",",
+                                       groupingSeparator: ".",
+                                       locale: Locale(identifier: "pt_BR"))?.formatted
+                == "5 ft 10,87 pol.",
+               "feet and inches follow the person's number and unit language")
+
         // MARK: Command bar emoji
 
         expect(CommandBarEmoji.emoji.count > 150, "the curated emoji set is there")
@@ -11820,8 +12285,16 @@ struct MetricsTests {
         expect(Defaults.registeredDefaults[DefaultsKey.recorderQuality] as? String == "balanced"
                 && Defaults.registeredDefaults[DefaultsKey.recorderFrameRate] as? Int == 60
                 && Defaults.registeredDefaults[DefaultsKey.recorderCountdown] as? Int == 3
+                && Defaults.registeredDefaults[DefaultsKey.recorderAutomaticZoom] as? Bool == true
                 && Defaults.registeredDefaults[DefaultsKey.recorderOpenEditor] as? Bool == true,
-               "the recorder ships balanced, smooth, with a short countdown and the editor on")
+               "the recorder ships balanced, smooth, with automatic zooms, a short countdown and the editor on")
+        expect(ScreenshotSupport.countdownRingProgress(elapsed: 0) == 1
+                && ScreenshotSupport.countdownRingProgress(elapsed: 0.46) == 0.5
+                && ScreenshotSupport.countdownRingProgress(elapsed: 0.92) == 0,
+               "the countdown ring drains smoothly across each displayed number")
+        expect(ScreenshotSupport.countdownRingProgress(elapsed: -1) == 1
+                && ScreenshotSupport.countdownRingProgress(elapsed: 2) == 0,
+               "the countdown ring clamps delayed and early frames")
         expect(GlobalShortcutRole.screenRecorder.requiredEnableKeys
                 == [DefaultsKey.recorderShortcutEnabled]
                 && GlobalShortcutRole.screenRecorder.feature == .screenRecorder,
@@ -11840,6 +12313,7 @@ struct MetricsTests {
                 && SettingsBackupSupport.exportKeys().contains(DefaultsKey.recorderQuality)
                 && SettingsBackupSupport.exportKeys().contains(DefaultsKey.recorderGIFSize)
                 && SettingsBackupSupport.exportKeys().contains(DefaultsKey.recorderMicrophone)
+                && SettingsBackupSupport.exportKeys().contains(DefaultsKey.recorderAutomaticZoom)
                 && SettingsBackupSupport.exportKeys().contains(DefaultsKey.recorderSharingEnabled)
                 && SettingsBackupSupport.exportKeys().contains(DefaultsKey.recorderSaveFolder),
                "the screen recorder settings travel in backups")
@@ -12110,6 +12584,10 @@ struct MetricsTests {
         expect(recoveredZooms.zoomSegments.count == 1
                 && recoveredZooms.zoomSegments[0].followsPointer,
                "turning automatic zoom back on recovers a click-based zoom that was deleted")
+        let disabledZooms = RecorderEditDocument(zoomEnabled: false)
+            .restoringAutomaticZooms(clicks: [click], duration: 10)
+        expect(disabledZooms.zoomSegments.isEmpty,
+               "a recording with automatic zooms off starts without zooms on its timeline")
         var intentionalZoom = RecorderTimeline.ZoomSegment(start: 2, end: 4, amount: 2.2)
         intentionalZoom.focusX = 0.2
         intentionalZoom.focusY = 0.3
@@ -12526,7 +13004,7 @@ struct MetricsTests {
         for language in AppLanguage.allCases {
             let commandBarValues = Mirror(reflecting: FeatureStrings.commandBar(language)).children
                 .compactMap { $0.value as? String }
-            expect(commandBarValues.count == 128 && commandBarValues.allSatisfy { !$0.isEmpty },
+            expect(commandBarValues.count == 133 && commandBarValues.allSatisfy { !$0.isEmpty },
                    "every command bar string is set for \(language.rawValue)")
             expect(commandBarValues.allSatisfy { !$0.contains("—") },
                    "no em-dash in visible command bar strings (\(language.rawValue))")
@@ -12830,6 +13308,41 @@ struct MetricsTests {
                     title: CommandBarLinks.rankingTitle(name: "gh", query: "gh vorssaint utils"),
                     keywords: "Link", query: "gh vorssaint utils") != nil,
                "a saved search stays in the list while what to look for is typed")
+
+        expect(CommandBarLink.Kind.script.symbolName == "terminal",
+               "a script link gets its own icon")
+        expect(CommandBarLink(name: "cur", kind: .script, destination: "/tmp/x").takesArgument
+                && !CommandBarLink(name: "a", kind: .place, destination: "/tmp").takesArgument,
+               "a script always takes its argument; a plain place or link does not")
+        expect(CommandBarLink(name: "gh", kind: .link, destination: "https://x/{query}").takesArgument,
+               "a query link still takes its argument through the existing placeholder check")
+        expect(CommandBarLinks.url(for: CommandBarLink(name: "cur", kind: .script,
+                                                        destination: "/tmp/x"),
+                                   expanded: "/tmp/x") == nil,
+               "a script has nothing to open")
+        let scriptLinks = [
+            CommandBarLink(name: "a", kind: .link, destination: "https://x"),
+            CommandBarLink(name: "cur", kind: .script, destination: "/tmp/currency-convert.sh"),
+        ]
+        expect(CommandBarLinks.matchingScriptLink(in: scriptLinks, query: "cur 100 usd eur")?.argument
+                == "100 usd eur",
+               "a script link matches once something follows its name")
+        expect(CommandBarLinks.matchingScriptLink(in: scriptLinks, query: "cur") == nil,
+               "the bare name alone has nothing to run yet")
+        expect(CommandBarLinks.matchingScriptLink(in: scriptLinks, query: "a 100 usd eur") == nil,
+               "a non-script link never matches, even with an argument")
+        let overlappingScripts = [
+            CommandBarLink(name: "run", kind: .script, destination: "/tmp/short"),
+            CommandBarLink(name: "run report", kind: .script, destination: "/tmp/specific"),
+        ]
+        expect(CommandBarLinks.matchingScriptLink(in: overlappingScripts,
+                                                   query: "run report today")?.link.name
+                == "run report",
+               "the most specific script name wins over a shorter prefix")
+        expect(CommandBarLinks.resultText("  100 USD = 86.70 EUR\n") == "100 USD = 86.70 EUR",
+               "a script's output loses its wrapping whitespace")
+        expect(CommandBarLinks.resultText("   \n") == nil,
+               "empty output means nothing is ready yet")
 
         // MARK: Open what was typed as a URL
         for address in ["example.com", "example.com/x", "https://example.com",
