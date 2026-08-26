@@ -1341,22 +1341,27 @@ struct MetricsTests {
                "high-resolution wheels keep their fractional ticks when the integer field truncates to zero")
         expect(SmoothScrollSupport.ticks(line: -2, fixedPoint: 0) == -2,
                "a zero fixed-point field falls back to the integer line delta")
-        var smoothEngine = SmoothScrollSupport.Engine()
-        smoothEngine.add(vertical: 40, horizontal: 0)
-        expect(smoothEngine.remainingVertical == 40,
-               "one wheel tick queues one step of glide")
-        smoothEngine.add(vertical: 80, horizontal: 20)
-        expect(smoothEngine.remainingVertical == 120 && smoothEngine.remainingHorizontal == 20,
-               "same-direction input adds to what is left on each axis")
-        smoothEngine.add(vertical: -40, horizontal: 0)
-        expect(smoothEngine.remainingVertical == -40 && smoothEngine.remainingHorizontal == 20,
-               "reversing one axis abandons only that axis's old tail")
-        let reversedFrame = smoothEngine.advance(
-            elapsed: SmoothScrollSupport.frameInterval,
-            response: SmoothScrollSupport.defaultResponse
-        )
-        expect(reversedFrame.vertical < 0 && reversedFrame.horizontal > 0,
-               "the first frame after a reversal moves in the new direction immediately")
+        expect(abs(SmoothScrollSupport.impulse(delta: 1, step: 33.6, speed: 2.7) - 90.72) < 0.000001,
+               "a weak notch is raised to the step then stretched by speed")
+        expect(abs(SmoothScrollSupport.impulse(delta: 40, step: 33.6, speed: 2.7) - 108) < 0.000001,
+               "a larger continuous reading keeps its own magnitude before speed")
+        expect(abs(SmoothScrollSupport.impulse(delta: -1, step: 33.6, speed: 2.7) + 90.72) < 0.000001,
+               "direction survives the impulse conversion")
+        expect(SmoothScrollSupport.impulse(delta: 0, step: 33.6, speed: 2.7) == 0,
+               "an empty reading asks for no distance")
+        var axis = SmoothScrollSupport.AxisState()
+        axis = SmoothScrollSupport.apply(impulse: 90.72, to: axis)
+        expect(abs(axis.buffer - 90.72) < 0.000001 && axis.current == 0,
+               "one wheel tick grows the target buffer")
+        axis = SmoothScrollSupport.apply(impulse: 50, to: axis)
+        expect(abs(axis.buffer - 140.72) < 0.000001,
+               "same-direction ticks accumulate in the buffer")
+        axis = SmoothScrollSupport.apply(impulse: -40, to: axis)
+        expect(axis.buffer == -40 && axis.current == 0,
+               "reversing direction replaces the buffer and clears delivered distance")
+        let idleAxis = SmoothScrollSupport.apply(impulse: 0, to: axis)
+        expect(idleAxis == axis,
+               "a tickless event leaves the glide untouched")
         // Measured against a scroll view: a one-line tick with Shift moves the
         // content the same way a horizontal delta of the SAME sign does, so
         // the redirect must not flip the tick.
@@ -1372,227 +1377,359 @@ struct MetricsTests {
         expect(SmoothScrollSupport.axes(vertical: 2, horizontal: -1, shiftPressed: true)
                == SmoothScrollSupport.Axes(vertical: 2, horizontal: -1),
                "Shift preserves a wheel event that already carries horizontal movement")
-        let defaultFrameDelta = SmoothScrollSupport.frameDelta(
-            remaining: 100,
-            elapsed: SmoothScrollSupport.frameInterval,
-            response: SmoothScrollSupport.defaultResponse
-        )
-        expect(abs(defaultFrameDelta - 18) < 0.5,
-               "the registered response keeps the former default's initial movement")
-        expect(SmoothScrollSupport.frameDelta(
-            remaining: -100,
-            elapsed: SmoothScrollSupport.frameInterval,
-            response: SmoothScrollSupport.defaultResponse
-        ) < 0,
+        expect(abs(SmoothScrollSupport.frameTransition(base: 0.18, deltaTime: 1.0 / 60.0) - 0.18) < 0.000001,
+               "at 60 Hz the timed transition matches the base α")
+        expect(SmoothScrollSupport.frameTransition(base: 0.18, deltaTime: 1.0 / 120.0)
+                < SmoothScrollSupport.frameTransition(base: 0.18, deltaTime: 1.0 / 60.0),
+               "a 120 Hz frame advances less of the coast than a 60 Hz frame")
+        expect(SmoothScrollSupport.transition(forDuration: 3.0) == 0.240,
+               "the default duration maps to a soft lerp factor")
+        expect(SmoothScrollSupport.transition(forDuration: 1.0) == 0.561,
+               "a short duration maps to a snappy lerp factor")
+        expect(SmoothScrollSupport.frameDelta(buffer: 100, current: 0, transition: 0.18) == 18,
+               "a frame emits its fraction of the remaining distance")
+        expect(SmoothScrollSupport.frameDelta(buffer: 0, current: 100, transition: 0.18) == -18,
                "negative glides emit negative frames")
-        expect(SmoothScrollSupport.frameDelta(
-            remaining: 0.8,
-            elapsed: SmoothScrollSupport.frameInterval,
-            response: SmoothScrollSupport.defaultResponse
-        ) == 0.8,
-               "small leftovers flush in one final frame")
-        expect(SmoothScrollSupport.frameDelta(
-            remaining: 3,
-            elapsed: SmoothScrollSupport.frameInterval,
-            response: SmoothScrollSupport.defaultResponse
-        ) == 1
-                && SmoothScrollSupport.frameDelta(
-                    remaining: 3,
-                    elapsed: SmoothScrollSupport.frameInterval / 2,
-                    response: SmoothScrollSupport.defaultResponse
-                ) == 0.5,
-               "the time-based tail keeps moving at the former default cadence")
-        expect(SmoothScrollSupport.frameDelta(
-            remaining: 100,
-            elapsed: SmoothScrollSupport.frameInterval,
-            response: SmoothScrollSupport.responseRange.upperBound
-        ) > defaultFrameDelta
-                && SmoothScrollSupport.frameDelta(
-                    remaining: 100,
-                    elapsed: SmoothScrollSupport.frameInterval,
-                    response: SmoothScrollSupport.responseRange.lowerBound
-                ) < defaultFrameDelta,
-               "response changes how quickly the glide follows the wheel")
-        expect(SmoothScrollSupport.frameDelta(
-            remaining: 100,
-            elapsed: 1,
-            response: SmoothScrollSupport.defaultResponse
-        ) == SmoothScrollSupport.frameDelta(
-            remaining: 100,
-            elapsed: SmoothScrollSupport.maximumFrameInterval,
-            response: SmoothScrollSupport.defaultResponse
-        ),
-               "a stalled run loop cannot dump the entire tail in one frame")
-        expect(SmoothScrollSupport.frameDelta(
-            remaining: 0,
-            elapsed: SmoothScrollSupport.frameInterval,
-            response: SmoothScrollSupport.defaultResponse
-        ) == 0,
+        expect(SmoothScrollSupport.frameDelta(buffer: 0, current: 0, transition: 0.18) == 0,
                "no remaining distance emits nothing")
-        expect(SmoothScrollSupport.frameDelta(
-            remaining: 40,
-            elapsed: .nan,
-            response: SmoothScrollSupport.defaultResponse
-        ) == 0,
-               "an invalid elapsed time cannot corrupt the glide")
-        expect(SmoothScrollSupport.sanitizedStep(0) == 40,
+        let advanced = SmoothScrollSupport.advance(
+            state: SmoothScrollSupport.AxisState(buffer: 0.5, current: 0, lastImpulse: 1),
+            frame: 0.5)
+        expect(advanced.landed && advanced.state.current == advanced.state.buffer,
+               "a residual inside the dead zone has landed")
+        let stillGoing = SmoothScrollSupport.advance(
+            state: SmoothScrollSupport.AxisState(buffer: 10, current: 0, lastImpulse: 1),
+            frame: 0.85)
+        expect(!stillGoing.landed,
+               "a larger residual keeps the glide alive")
+        var filter = SmoothScrollSupport.PeakFilter()
+        let firstFiltered = filter.push(10)
+        let secondFiltered = filter.push(10)
+        let thirdFiltered = filter.push(0)
+        expect(abs(firstFiltered) < 0.000001,
+               "the peak filter eases the first sample in at zero")
+        expect(abs(secondFiltered - 2.3) < 0.000001,
+               "the next sample emits the prior 0.23 knot")
+        expect(abs(thirdFiltered - 4.071) < 0.000001,
+               "zero input advances the curve window to the next knot")
+        filter.reset()
+        expect(filter.isSettled,
+               "reset leaves the filter settled")
+        expect(SmoothScrollSupport.mustPassThroughRaw(accessibilityTrusted: false),
+               "without Accessibility the original wheel must pass through")
+        expect(!SmoothScrollSupport.mustPassThroughRaw(accessibilityTrusted: true),
+               "with Accessibility smoothing may swallow the wheel")
+        expect(SmoothScrollSupport.sanitizedStep(0) == 39.69,
                "an unset step falls back to the default")
         expect(SmoothScrollSupport.sanitizedStep(500) == 100,
                "the step clamps to its range")
-        expect(SmoothScrollSupport.sanitizedResponse(-1) == SmoothScrollSupport.responseRange.lowerBound
-                && SmoothScrollSupport.sanitizedResponse(500) == SmoothScrollSupport.responseRange.upperBound,
-               "response clamps damaged preferences to its range")
+        expect(SmoothScrollSupport.sanitizedStep(0.005) == 0.01,
+               "the step clamps to its lower bound")
+        expect(SmoothScrollSupport.sanitizedSpeed(0) == 3.00,
+               "an unset speed falls back to the default")
+        expect(SmoothScrollSupport.sanitizedSpeed(99) == 10,
+               "the speed clamps to its range")
+        expect(SmoothScrollSupport.sanitizedDuration(0) == 3.00,
+               "an unset duration falls back to the default")
+        expect(SmoothScrollSupport.sanitizedDuration(9) == 5,
+               "the duration clamps to its range")
+        expect(SmoothScrollSupport.sanitizedScrollAcceleration(-1) == 0,
+               "scroll acceleration clamps to its lower bound")
+        expect(SmoothScrollSupport.sanitizedScrollAcceleration(0.45) == 0.45,
+               "scroll acceleration keeps an intermediate value")
+        expect(SmoothScrollSupport.sanitizedScrollAcceleration(2) == 1,
+               "scroll acceleration clamps to its upper bound")
         expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollEnabled] as? Bool == false,
                "smooth scrolling ships off by default")
+        expect(Defaults.registeredDefaults[DefaultsKey.scrollInverterEnabled] as? Bool == false,
+               "vertical scroll inversion ships off by default")
         expect(Defaults.registeredDefaults[DefaultsKey.scrollInverterHorizontalEnabled] as? Bool == false,
                "horizontal scroll inversion ships off by default")
         expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.scrollInverterHorizontalEnabled),
                "horizontal scroll direction follows settings backups")
-        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollStep] as? Int == 40,
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollStep] as? Double == 39.69,
                "smooth scrolling step registers its default")
-        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollResponse] as? Int
-                == SmoothScrollSupport.defaultResponse
-                && SettingsBackupSupport.exportKeys().contains(DefaultsKey.smoothScrollResponse),
-               "smooth scrolling response registers its default and follows settings backups")
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollSpeed] as? Double == 3.00,
+               "smooth scrolling speed registers its default")
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollDuration] as? Double == 3.00,
+               "smooth scrolling duration registers its default")
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollAcceleration] as? Double == 0,
+               "scroll acceleration ships at zero by default")
+        expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.smoothScrollAcceleration),
+               "scroll acceleration follows settings backups")
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollVertical] as? Bool == true,
+               "vertical smooth axis ships off by default")
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollHorizontal] as? Bool == true,
+               "horizontal smooth axis ships off by default")
+        expect(SmoothScrollSupport.stepRangeText == "0.01 – 100.00",
+               "step range text matches Mos slider bounds")
+        expect(SmoothScrollSupport.speedRangeText == "1.00 – 10.00",
+               "speed range text matches Mos slider bounds")
+        expect(SmoothScrollSupport.durationRangeText == "1.00 – 5.00",
+               "duration range text matches Mos slider bounds")
 
-        var sixtyHertzEngine = SmoothScrollSupport.Engine()
-        var oneTwentyHertzEngine = SmoothScrollSupport.Engine()
-        sixtyHertzEngine.add(vertical: 80, horizontal: -80)
-        oneTwentyHertzEngine.add(vertical: 80, horizontal: -80)
-        var sixtyHertzDistance = SmoothScrollSupport.Axes(vertical: 0, horizontal: 0)
-        var oneTwentyHertzDistance = SmoothScrollSupport.Axes(vertical: 0, horizontal: 0)
-        for _ in 0..<12 {
-            let frame = sixtyHertzEngine.advance(
-                elapsed: 1.0 / 60.0,
-                response: SmoothScrollSupport.defaultResponse
-            )
-            sixtyHertzDistance = SmoothScrollSupport.Axes(
-                vertical: sixtyHertzDistance.vertical + frame.vertical,
-                horizontal: sixtyHertzDistance.horizontal + frame.horizontal
-            )
+        let bothSmooth = SmoothScrollSupport.axisPlan(
+            verticalDelta: 1, horizontalDelta: 1, step: 33.6, speed: 1,
+            smoothVertical: true, smoothHorizontal: true,
+            invertVertical: 1, invertHorizontal: 1)
+        expect(bothSmooth.swallowEntirely && !bothSmooth.hasPassThrough,
+               "both smooth axes swallow the original event")
+        let verticalSmoothHorizontalRaw = SmoothScrollSupport.axisPlan(
+            verticalDelta: 1, horizontalDelta: -2, step: 33.6, speed: 1,
+            smoothVertical: true, smoothHorizontal: false,
+            invertVertical: 1, invertHorizontal: 1)
+        expect(verticalSmoothHorizontalRaw.verticalImpulse != 0
+                && verticalSmoothHorizontalRaw.passThroughHorizontal
+                && !verticalSmoothHorizontalRaw.passThroughVertical
+                && !verticalSmoothHorizontalRaw.swallowEntirely,
+               "a disabled horizontal axis stays raw while vertical still glides")
+        let horizontalSmoothVerticalRaw = SmoothScrollSupport.axisPlan(
+            verticalDelta: 3, horizontalDelta: 1, step: 33.6, speed: 1,
+            smoothVertical: false, smoothHorizontal: true,
+            invertVertical: 1, invertHorizontal: -1)
+        expect(horizontalSmoothVerticalRaw.passThroughVertical
+                && horizontalSmoothVerticalRaw.horizontalImpulse < 0
+                && !horizontalSmoothVerticalRaw.swallowEntirely,
+               "a disabled vertical axis stays raw and the smooth axis still inverts")
+        let bothRaw = SmoothScrollSupport.axisPlan(
+            verticalDelta: 1, horizontalDelta: 1, step: 33.6, speed: 1,
+            smoothVertical: false, smoothHorizontal: false,
+            invertVertical: 1, invertHorizontal: 1)
+        expect(!bothRaw.hasSmoothImpulse && bothRaw.passThroughVertical
+                && bothRaw.passThroughHorizontal,
+               "both raw axes leave the original event alone")
+
+        expect(SmoothScrollSupport.shouldResetTail(
+                currentTargetProcessID: 10, newTargetProcessID: 11,
+                currentShift: false, newShift: false,
+                currentContinuous: false, newContinuous: false)
+                == [.targetProcessChanged],
+               "a new target process abandons the previous coast")
+        expect(SmoothScrollSupport.shouldResetTail(
+                currentTargetProcessID: 10, newTargetProcessID: 10,
+                currentShift: false, newShift: false,
+                currentContinuous: false, newContinuous: false).isEmpty,
+               "the same target process keeps the coast")
+        expect(SmoothScrollSupport.shouldResetTail(
+                currentTargetProcessID: 0, newTargetProcessID: 10,
+                currentShift: false, newShift: false,
+                currentContinuous: false, newContinuous: false).isEmpty,
+               "the first target assignment is not a reset")
+        expect(SmoothScrollSupport.shouldResetTail(
+                currentTargetProcessID: 10, newTargetProcessID: 10,
+                currentShift: false, newShift: true,
+                currentContinuous: false, newContinuous: false)
+                == [.shiftChanged],
+               "Shift mid-coast abandons the leftover")
+        expect(SmoothScrollSupport.shouldResetTail(
+                currentTargetProcessID: 10, newTargetProcessID: 10,
+                currentShift: false, newShift: false,
+                currentContinuous: false, newContinuous: true)
+                == [.continuousModeChanged],
+               "switching discrete/continuous mid-coast abandons the leftover")
+
+        var engine = SmoothScrollSupport.Engine(
+            preferences: .sanitized(step: 33.6, speed: 1, duration: 1,
+                                    smoothVertical: true, smoothHorizontal: true))
+        let firstPlan = SmoothScrollSupport.AxisPlan(verticalImpulse: 90.72,
+                                                     horizontalImpulse: 0,
+                                                     passThroughVertical: false,
+                                                     passThroughHorizontal: false)
+        engine = SmoothScrollSupport.ingest(plan: firstPlan,
+                                            into: engine,
+                                            targetProcessID: 42,
+                                            shiftPressed: false,
+                                            isContinuous: false,
+                                            flagsRaw: 0,
+                                            now: 1)
+        expect(engine.currentTargetProcessID == 42 && engine.isGliding,
+               "ingest starts a coast on the event target")
+        let switched = SmoothScrollSupport.ingest(
+            plan: SmoothScrollSupport.AxisPlan(verticalImpulse: 40,
+                                               horizontalImpulse: 0,
+                                               passThroughVertical: false,
+                                               passThroughHorizontal: false),
+            into: engine,
+            targetProcessID: 99,
+            shiftPressed: false,
+            isContinuous: false,
+            flagsRaw: 0,
+            now: 1.1)
+        expect(switched.currentTargetProcessID == 99
+                && abs(switched.vertical.buffer - 40) < 0.000001
+                && switched.vertical.current == 0,
+               "a different target replaces the previous buffer instead of leaking it")
+
+        let dead = SmoothScrollSupport.emitFrame(engine: switched, now: 1.2, targetAlive: false)
+        expect(dead.emission?.shouldStop == true && !dead.engine.isGliding,
+               "a dead target lands and stops instead of posting globally")
+
+        engine = SmoothScrollSupport.Engine(
+            preferences: .sanitized(step: 33.6, speed: 1, duration: 1,
+                                    smoothVertical: true, smoothHorizontal: false))
+        engine = SmoothScrollSupport.ingest(
+            plan: SmoothScrollSupport.AxisPlan(verticalImpulse: 50,
+                                               horizontalImpulse: 20,
+                                               passThroughVertical: false,
+                                               passThroughHorizontal: false),
+            into: engine,
+            targetProcessID: 7,
+            shiftPressed: false,
+            isContinuous: false,
+            flagsRaw: 0,
+            now: 2)
+        engine.applyAxisPreferenceGuards()
+        expect(engine.horizontal.buffer == 0 && engine.vertical.buffer == 50,
+               "disabling an axis mid-coast drops only that axis buffer")
+
+        // The Mos-style curve filter delays the leading edge, so coasts deliver
+        // most — not every — pixel of the impulse. Pin that the bulk arrives.
+        let sixtyHz = Array(repeating: 1.0 / 60.0, count: 240)
+        let posted60 = SmoothScrollSupport.conservedDistance(impulse: 90.72,
+                                                             duration: 1.0,
+                                                             frameIntervals: sixtyHz)
+        expect(posted60 > 70 && posted60 < 100,
+               "a 60 Hz coast delivers most of the impulse through the curve filter")
+        let twentyHz = Array(repeating: 1.0 / 20.0, count: 120)
+        let posted20 = SmoothScrollSupport.conservedDistance(impulse: 90.72,
+                                                             duration: 1.0,
+                                                             frameIntervals: twentyHz)
+        expect(posted20 > 70 && posted20 < 100,
+               "a stalled 20 Hz coast still delivers most of the impulse")
+        var stallFrames = Array(repeating: 1.0 / 60.0, count: 30)
+        stallFrames.append(0.25)
+        stallFrames.append(contentsOf: Array(repeating: 1.0 / 60.0, count: 210))
+        let postedStall = SmoothScrollSupport.conservedDistance(impulse: 90.72,
+                                                                duration: 1.0,
+                                                                frameIntervals: stallFrames)
+        expect(postedStall > 70 && postedStall < 100,
+               "a 250 ms stall mid-coast still delivers most of the impulse")
+
+        let exceptionSnapshot = MouseAppExceptionSupport.LookupSnapshot(
+            lookups: [.smoothScroll: ["com.example.excepted"]],
+            sourceProcessIDs: [.smoothScroll: [55]],
+            allEmpty: false,
+            cachedBundleID: "com.example.front",
+            cachedRegion: nil,
+            cachedPoint: .zero,
+            cachedAt: -1)
+        var targetBundleLookups = 0
+        expect(MouseAppExceptionSupport.excludes(
+                scope: .smoothScroll,
+                snapshot: exceptionSnapshot,
+                sourceProcessID: 0,
+                targetProcessID: 55,
+                targetBundleID: {
+                    targetBundleLookups += 1
+                    return "com.example.excepted"
+                },
+                pointerBundleID: "com.example.front"),
+               "the first tick of an excepted target is excluded before the pointer cache warms")
+        expect(targetBundleLookups == 0,
+               "a pid-set hit never resolves the target bundle id on the tap path")
+        expect(!MouseAppExceptionSupport.excludes(
+                scope: .smoothScroll,
+                snapshot: exceptionSnapshot,
+                sourceProcessID: 0,
+                targetProcessID: 56,
+                targetBundleID: {
+                    targetBundleLookups += 1
+                    return "com.example.other"
+                },
+                pointerBundleID: "com.example.front"),
+               "a non-excepted target still glides while frontmost differs")
+        expect(targetBundleLookups == 1,
+               "bundle id resolves only after both pid-set checks miss")
+        expect(SmoothScrollSupport.isProcessAlive(0) == false,
+               "pid 0 is never treated as a live scroll target")
+        expect(SmoothScrollSupport.isProcessAlive(getpid()),
+               "the test process reports as alive for post targeting")
+
+        do {
+            let suiteName = "com.vorssaint.tests.smooth-scroll-migrate.\(UUID().uuidString)"
+            let suite = UserDefaults(suiteName: suiteName)!
+            defer { suite.removePersistentDomain(forName: suiteName) }
+            suite.set(34 as Int, forKey: DefaultsKey.smoothScrollStep)
+            suite.set(3 as Int, forKey: DefaultsKey.smoothScrollSpeed)
+            suite.set(4 as Int, forKey: DefaultsKey.smoothScrollDuration)
+            suite.set(true, forKey: DefaultsKey.smoothScrollAcceleration)
+            Defaults.migrateSmoothScrollNumbers(in: suite)
+            expect(suite.object(forKey: DefaultsKey.smoothScrollStep) is Double,
+                   "an Int step is rewritten as Double so AppStorage sliders can bind")
+            expect(suite.double(forKey: DefaultsKey.smoothScrollStep) == 34,
+                   "migrated step keeps its numeric value")
+            expect(suite.object(forKey: DefaultsKey.smoothScrollSpeed) is Double,
+                   "an Int speed is rewritten as Double")
+            expect(suite.object(forKey: DefaultsKey.smoothScrollDuration) is Double,
+                   "an Int duration is rewritten as Double")
+            expect(suite.object(forKey: DefaultsKey.smoothScrollAcceleration) is Double
+                    && suite.double(forKey: DefaultsKey.smoothScrollAcceleration) == 1,
+                   "the former acceleration switch migrates to a full-strength Double")
         }
-        for _ in 0..<24 {
-            let frame = oneTwentyHertzEngine.advance(
-                elapsed: 1.0 / 120.0,
-                response: SmoothScrollSupport.defaultResponse
-            )
-            oneTwentyHertzDistance = SmoothScrollSupport.Axes(
-                vertical: oneTwentyHertzDistance.vertical + frame.vertical,
-                horizontal: oneTwentyHertzDistance.horizontal + frame.horizontal
-            )
-        }
-        expect(abs(sixtyHertzDistance.vertical - oneTwentyHertzDistance.vertical) < 0.000001
-                && abs(sixtyHertzDistance.horizontal - oneTwentyHertzDistance.horizontal) < 0.000001
-                && abs(sixtyHertzEngine.remainingVertical - oneTwentyHertzEngine.remainingVertical) < 0.000001
-                && abs(sixtyHertzEngine.remainingHorizontal - oneTwentyHertzEngine.remainingHorizontal) < 0.000001,
-               "equal elapsed time produces the same glide at 60 and 120 Hz")
 
-        expect(FocusFollowsMouseSupport.sanitizedDelay(0)
-                == FocusFollowsMouseSupport.delayRange.lowerBound
-                && FocusFollowsMouseSupport.sanitizedDelay(2_000)
-                == FocusFollowsMouseSupport.delayRange.upperBound,
-               "focus follows mouse clamps a damaged delay preference")
-        var focusFollowsMouseState = FocusFollowsMouseState()
-        focusFollowsMouseState.recordMovement(to: CGPoint(x: 40, y: 70), at: 10)
-        expect(focusFollowsMouseState.nextEvaluation(at: 10.20, delayMilliseconds: 250) == nil,
-               "focus follows mouse waits for the pointer to settle")
-        let settledFocus = focusFollowsMouseState.nextEvaluation(at: 10.25, delayMilliseconds: 250)
-        expect(settledFocus?.point == CGPoint(x: 40, y: 70)
-                && settledFocus.map(focusFollowsMouseState.isCurrent) == true,
-               "focus follows mouse evaluates the settled pointer once")
-        expect(focusFollowsMouseState.nextEvaluation(at: 11, delayMilliseconds: 250) == nil,
-               "focus follows mouse does not refocus without new movement")
-        focusFollowsMouseState.recordMovement(to: CGPoint(x: 90, y: 20), at: 12)
-        expect(settledFocus.map(focusFollowsMouseState.isCurrent) == false,
-               "a stale window lookup cannot focus after the pointer moves")
-        focusFollowsMouseState.reset()
-        expect(focusFollowsMouseState.point == nil,
-               "space and wake resets discard the old pointer target")
-        expect(Defaults.registeredDefaults[DefaultsKey.focusFollowsMouseEnabled] as? Bool == false
-                && Defaults.registeredDefaults[DefaultsKey.focusFollowsMouseDelay] as? Int
-                    == FocusFollowsMouseSupport.defaultDelayMilliseconds,
-               "focus follows mouse ships off with a safe delay")
-        expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.focusFollowsMouseDelay),
-               "focus follows mouse preferences follow settings backups")
-        let focusFollowsMouseServiceSource = (try? String(
-            contentsOfFile: "Sources/Vorssaint/Services/FocusFollowsMouse/FocusFollowsMouseService.swift",
-            encoding: .utf8)) ?? ""
-        expect(focusFollowsMouseServiceSource.contains(".leftMouseDragged")
-                && focusFollowsMouseServiceSource.contains(".rightMouseDragged")
-                && focusFollowsMouseServiceSource.contains(".otherMouseDragged"),
-               "focus follows mouse tracks the final pointer position while a button is held")
-        expect(focusFollowsMouseServiceSource.contains("excludesPointerTarget(")
-                && focusFollowsMouseServiceSource.contains(
-                    ".focusFollowsMouse, at: evaluation.point"),
-               "focus follows mouse leaves selected apps alone before querying Accessibility")
-        expect(focusFollowsMouseServiceSource.contains("SessionActivity.shared.onChange")
-                && focusFollowsMouseServiceSource.contains(
-                    "sessionIsActive: SessionActivity.shared.isActive")
-                && focusFollowsMouseServiceSource.contains("AXIsProcessTrusted()"),
-               "focus follows mouse owns no monitor or timer in a switched-away or untrusted session")
-
-        // A wheel that reports continuously already measures in points, and
-        // that field is the one to trust; the line field only fills in for a
-        // movement too small to register as a whole point.
+        // Mos usableValue priority: point → fixed-point → line (no ×10).
+        expect(SmoothScrollSupport.usableValue(line: 1, fixedPoint: 0, point: 40) == 40,
+               "point wins over line and fixed-point")
+        expect(SmoothScrollSupport.usableValue(line: 1, fixedPoint: 5, point: 0) == 5,
+               "fixed-point wins when point is empty, without points-per-line scaling")
+        expect(SmoothScrollSupport.usableValue(line: 1, fixedPoint: 0, point: 0) == 1,
+               "line is the last fallback")
+        expect(SmoothScrollSupport.usableValue(line: 0, fixedPoint: 0, point: 0) == 0,
+               "an empty reading is zero")
+        expect(SmoothScrollSupport.wheelValue(
+            line: 1, fixedPoint: 1, point: 80, step: 39.69,
+            scrollAcceleration: 0) == 39.69,
+               "zero scroll acceleration keeps the normalized raw distance")
+        expect(SmoothScrollSupport.wheelValue(
+            line: 1, fixedPoint: 1, point: 80, step: 39.69,
+            scrollAcceleration: 1) == 80,
+               "full scroll acceleration uses the accelerated point distance")
+        expect(abs(SmoothScrollSupport.wheelValue(
+            line: 1, fixedPoint: 1, point: 80, step: 39.69,
+            scrollAcceleration: 0.5) - 59.845) < 0.000001,
+               "intermediate scroll acceleration blends normalized raw and accelerated distances")
+        expect(SmoothScrollSupport.wheelValue(
+            line: 0, fixedPoint: 0, point: 12, step: 39.69,
+            scrollAcceleration: 0) == 39.69,
+               "unaccelerated mode falls back for drivers that only provide point deltas")
         expect(ScrollWheelSupport.pointsPerLine == 10,
-               "one scroll line spans ten points")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 4.0, pointDelta: 40, step: 40) == 40,
-               "the default step travels the same distance the event asked for")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 4.0, pointDelta: 12, step: 40) == 12,
+               "one scroll line spans ten points for other wheel helpers")
+        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 4.0, pointDelta: 40) == 40,
                "the point field wins, so no assumption about points per line is made")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 4.0, pointDelta: 40, step: 20) == 20,
-               "a shorter step halves the distance of a continuous wheel")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 4.0, pointDelta: 40, step: 100) == 100,
-               "a longer step stretches the distance of a continuous wheel")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: -0.5, pointDelta: -5, step: 40) == -5,
-               "direction survives the conversion")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 0.35, pointDelta: 0, step: 40) == 3.5,
-               "a movement below one whole point still glides")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 0, pointDelta: 12, step: 40) == 12,
+        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 0.35, pointDelta: 0) == 0.35,
+               "fixed-point is used as-is when point is empty (Mos-compatible)")
+        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 0, pointDelta: 12) == 12,
                "a driver that fills in only whole points still glides")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: 0, pointDelta: 0, step: 40) == 0,
+        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 0, pointDelta: 0) == 0,
                "an empty event asks for no distance")
-        expect(SmoothScrollSupport.continuousDistance(
-            fixedPointDelta: .nan, pointDelta: 0, step: 40) == 0,
+        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: .nan, pointDelta: 0) == 0,
                "a nonsense delta asks for no distance")
+        expect(abs(SmoothScrollSupport.continuousImpulse(
+            fixedPointDelta: 4.0, pointDelta: 40, step: 33.6, speed: 2.7) - 108) < 0.000001,
+               "a continuous wheel is stretched by speed once")
+        expect(abs(SmoothScrollSupport.continuousImpulse(
+            fixedPointDelta: -0.5, pointDelta: -5, step: 33.6, speed: 1.0) + 33.6) < 0.000001,
+               "a short continuous reading is raised to the step floor")
+        let continuousAxis = SmoothScrollSupport.apply(
+            impulse: SmoothScrollSupport.continuousImpulse(
+                fixedPointDelta: 4.0, pointDelta: 40, step: 33.6, speed: 2.7),
+            to: SmoothScrollSupport.AxisState())
+        expect(abs(continuousAxis.buffer - 108) < 0.000001,
+               "the continuous impulse lands in the buffer exactly once")
 
-        // The continuous path scales by the step itself and then hands the
-        // budget a step of one. Scaling in both places would square the
-        // setting, so pin that the budget equals the distance.
-        for continuousStep in [20.0, 40.0, 100.0] {
-            let distance = SmoothScrollSupport.continuousDistance(
-                fixedPointDelta: 4.0, pointDelta: 40, step: continuousStep)
-            var engine = SmoothScrollSupport.Engine()
-            engine.add(vertical: distance, horizontal: 0)
-            expect(engine.remainingVertical == distance,
-                   "the step scales a continuous wheel exactly once")
-        }
-
-        var exactDistanceEngine = SmoothScrollSupport.Engine()
-        exactDistanceEngine.add(vertical: 40.4, horizontal: -17.3)
-        var exactVertical = 0.0
-        var exactHorizontal = 0.0
-        for _ in 0..<600 {
-            if !exactDistanceEngine.isActive { break }
-            let frame = exactDistanceEngine.advance(
-                elapsed: 1.0 / 120.0,
-                response: SmoothScrollSupport.responseRange.lowerBound
-            )
-            exactVertical += frame.vertical
-            exactHorizontal += frame.horizontal
-        }
-        expect(!exactDistanceEngine.isActive
-                && abs(exactVertical - 40.4) < 0.000001
-                && abs(exactHorizontal + 17.3) < 0.000001,
-               "the engine spends the exact distance on both axes")
+        // Touch devices stay out of the smooth path.
+        expect(!ScrollWheelSupport.isMouseWheel(
+            ScrollWheelEventTraits(isContinuous: true, momentumPhase: 1, scrollPhase: 0, scrollCount: 0),
+            secondsSinceLastGesturePhase: nil),
+               "momentum events are treated as trackpad input")
+        expect(!ScrollWheelSupport.isMouseWheel(
+            ScrollWheelEventTraits(isContinuous: true, momentumPhase: 0, scrollPhase: 1, scrollCount: 0),
+            secondsSinceLastGesturePhase: nil),
+               "scroll-phase events are treated as trackpad input")
+        expect(ScrollWheelSupport.isMouseWheel(
+            ScrollWheelEventTraits(isContinuous: false, momentumPhase: 0, scrollPhase: 0, scrollCount: 0),
+            secondsSinceLastGesturePhase: nil),
+               "discrete wheel ticks remain mouse input")
 
         // Fractions are carried instead of rounded away, so the glide
         // delivers the whole distance it was given.
@@ -1631,27 +1768,35 @@ struct MetricsTests {
                "reversing direction drops the leftovers")
         expect(SmoothScrollSupport.carry(0.6, continuing: 0) == 0.6,
                "an empty event leaves the leftovers alone")
-        var roundedEngine = SmoothScrollSupport.Engine()
-        roundedEngine.add(vertical: 40.4, horizontal: 0)
-        var roundedCarry = 0.0
-        var roundedDistance = 0.0
-        for _ in 0..<600 {
-            if !roundedEngine.isActive { break }
-            let frame = roundedEngine.advance(
-                elapsed: 1.0 / 120.0,
-                response: SmoothScrollSupport.defaultResponse
-            )
-            if frame.finished {
-                roundedDistance += SmoothScrollSupport.finalPixels(frame.vertical, carry: roundedCarry)
-                roundedCarry = 0
-            } else {
-                let output = SmoothScrollSupport.wholePixels(frame.vertical, carry: roundedCarry)
-                roundedDistance += output.pixels
-                roundedCarry = output.carry
-            }
-        }
-        expect(abs(roundedDistance - 40.4) <= 0.5,
-               "posted whole-point frames land within half a point of the requested distance")
+
+
+        expect(FocusFollowsMouseSupport.sanitizedDelay(0)
+                == FocusFollowsMouseSupport.delayRange.lowerBound
+                && FocusFollowsMouseSupport.sanitizedDelay(2_000)
+                == FocusFollowsMouseSupport.delayRange.upperBound,
+               "focus follows mouse clamps a damaged delay preference")
+        var focusFollowsMouseState = FocusFollowsMouseState()
+        focusFollowsMouseState.recordMovement(to: CGPoint(x: 40, y: 70), at: 10)
+        expect(focusFollowsMouseState.nextEvaluation(at: 10.20, delayMilliseconds: 250) == nil,
+               "focus follows mouse waits for the pointer to settle")
+        let settledFocus = focusFollowsMouseState.nextEvaluation(at: 10.25, delayMilliseconds: 250)
+        expect(settledFocus?.point == CGPoint(x: 40, y: 70)
+                && settledFocus.map(focusFollowsMouseState.isCurrent) == true,
+               "focus follows mouse evaluates the settled pointer once")
+        expect(focusFollowsMouseState.nextEvaluation(at: 11, delayMilliseconds: 250) == nil,
+               "focus follows mouse does not refocus without new movement")
+        focusFollowsMouseState.recordMovement(to: CGPoint(x: 90, y: 20), at: 12)
+        expect(settledFocus.map(focusFollowsMouseState.isCurrent) == false,
+               "a stale window lookup cannot focus after the pointer moves")
+        focusFollowsMouseState.reset()
+        expect(focusFollowsMouseState.point == nil,
+               "space and wake resets discard the old pointer target")
+        expect(Defaults.registeredDefaults[DefaultsKey.focusFollowsMouseEnabled] as? Bool == false
+                && Defaults.registeredDefaults[DefaultsKey.focusFollowsMouseDelay] as? Int
+                    == FocusFollowsMouseSupport.defaultDelayMilliseconds,
+               "focus follows mouse ships off with a safe delay")
+        expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.focusFollowsMouseDelay),
+               "focus follows mouse preferences follow settings backups")
 
         // MARK: Watts & percent
 
@@ -11365,9 +11510,15 @@ struct MetricsTests {
         for (language, strings) in localizedStrings {
             let prefix = "localization \(language.rawValue)"
             expect(!strings.smoothScrollStepLabel.isEmpty
-                   && !strings.smoothScrollResponseLabel.isEmpty
+                   && !strings.smoothScrollSpeedLabel.isEmpty
+                   && !strings.smoothScrollDurationLabel.isEmpty
+                   && !strings.smoothScrollAccelerationLabel.isEmpty
+                   && !strings.mouseScrollingSection.isEmpty
                    && !strings.smoothScrollStepLabel.contains("—")
-                   && !strings.smoothScrollResponseLabel.contains("—"),
+                   && !strings.smoothScrollSpeedLabel.contains("—")
+                   && !strings.smoothScrollDurationLabel.contains("—")
+                   && !strings.smoothScrollAccelerationLabel.contains("—")
+                   && !strings.mouseScrollingSection.contains("—"),
                    "\(prefix) smooth scrolling controls are present without em dash")
             expect(strings.quickToolsTab == strings.launcherName,
                    "\(prefix) Quick panel keeps the same name in Settings")
@@ -17496,8 +17647,31 @@ struct MetricsTests {
                     (Defaults.registeredDefaults[$0.defaultsKey] as? [String])?.isEmpty == true
                },
                "every feature's exception list registers empty, so they all start out working everywhere")
-        expect(Set(MouseExceptionScope.allCases.map(\.defaultsKey)).count == MouseExceptionScope.allCases.count,
-               "each feature keeps its own list, never a key shared with another")
+        expect(MouseExceptionScope.smoothScroll.defaultsKey
+                == MouseExceptionScope.scrollDirection.defaultsKey
+                && MouseExceptionScope.smoothScroll.defaultsKey
+                    == DefaultsKey.mouseScrollingExceptions,
+               "smooth scrolling and direction inversion share one app list")
+        expect(Set(MouseExceptionScope.allCases.map(\.defaultsKey)).count
+                == MouseExceptionScope.allCases.count - 1,
+               "only the two scrolling behaviors share an exception key")
+
+        do {
+            let suiteName = "com.vorssaint.tests.mouse-scroll-exceptions.\(UUID().uuidString)"
+            let suite = UserDefaults(suiteName: suiteName)!
+            defer { suite.removePersistentDomain(forName: suiteName) }
+            suite.set(["com.example.shared"], forKey: DefaultsKey.mouseScrollingExceptions)
+            suite.set(["com.example.smooth"], forKey: DefaultsKey.smoothScrollExceptions)
+            suite.set(["com.example.direction", "com.example.shared"],
+                      forKey: DefaultsKey.scrollInverterExceptions)
+            Defaults.migrateMouseScrollingExceptions(in: suite)
+            expect(suite.stringArray(forKey: DefaultsKey.mouseScrollingExceptions)
+                    == ["com.example.shared", "com.example.smooth", "com.example.direction"],
+                   "legacy scrolling exception lists merge into one ordered list")
+            expect(suite.object(forKey: DefaultsKey.smoothScrollExceptions) == nil
+                    && suite.object(forKey: DefaultsKey.scrollInverterExceptions) == nil,
+                   "legacy scrolling lists are cleared after migration")
+        }
         expect(MouseExceptionScope.smoothScroll.feature == .smoothScroll
                 && MouseExceptionScope.scrollDirection.feature == .scrollInverter
                 && MouseExceptionScope.focusFollowsMouse.feature == .focusFollowsMouse
@@ -17793,8 +17967,8 @@ struct MetricsTests {
             expect(values.allSatisfy { !$0.contains("—") },
                    "no em-dash in visible mouse exception strings (\(language.rawValue))")
             expect(Set(MouseExceptionScope.allCases.map { strings.caption(for: $0) }).count
-                    == MouseExceptionScope.allCases.count,
-                   "each list explains its own feature, never the same line twice (\(language.rawValue))")
+                    == MouseExceptionScope.allCases.count - 1,
+                   "only the two shared scrolling scopes reuse a caption (\(language.rawValue))")
         }
 
         for language in AppLanguage.allCases {

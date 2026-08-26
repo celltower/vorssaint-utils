@@ -4,9 +4,9 @@
 import CoreGraphics
 import Foundation
 
-/// The mouse features that can be told to leave an app alone (issue #358).
-/// Each one keeps its OWN list, right under its switch in Settings: excepting
-/// an app from the wheel's glide must not also silence the side buttons there.
+/// The mouse behaviors that can be told to leave an app alone (issue #358).
+/// Both scrolling behaviors intentionally share one list; unrelated mouse
+/// actions keep their own lists.
 enum MouseExceptionScope: String, CaseIterable {
     case smoothScroll
     case scrollDirection
@@ -17,8 +17,7 @@ enum MouseExceptionScope: String, CaseIterable {
 
     var defaultsKey: String {
         switch self {
-        case .smoothScroll: return DefaultsKey.smoothScrollExceptions
-        case .scrollDirection: return DefaultsKey.scrollInverterExceptions
+        case .smoothScroll, .scrollDirection: return DefaultsKey.mouseScrollingExceptions
         case .focusFollowsMouse: return DefaultsKey.focusFollowsMouseExceptions
         case .navigation: return DefaultsKey.mouseNavigationExceptions
         case .buttonShortcuts: return DefaultsKey.mouseButtonExceptions
@@ -202,5 +201,53 @@ enum MouseAppExceptionSupport {
 
     static func isExcepted(_ bundleIDs: [String], exceptions: Set<String>) -> Bool {
         bundleIDs.contains(where: exceptions.contains)
+    }
+
+    /// Immutable answer the scroll taps consult. Built under the exceptions
+    /// lock so a dedicated tap thread never races the main-thread reload path.
+    struct LookupSnapshot: Equatable {
+        var lookups: [MouseExceptionScope: Set<String>]
+        var sourceProcessIDs: [MouseExceptionScope: Set<Int32>]
+        var allEmpty: Bool
+        var cachedBundleID: String?
+        var cachedRegion: CGRect?
+        var cachedPoint: CGPoint
+        var cachedAt: TimeInterval
+
+        static let empty = LookupSnapshot(lookups: [:],
+                                          sourceProcessIDs: [:],
+                                          allEmpty: true,
+                                          cachedBundleID: nil,
+                                          cachedRegion: nil,
+                                          cachedPoint: .zero,
+                                          cachedAt: -1)
+    }
+
+    /// Resolves whether a scope excludes the pointer target using only the
+    /// snapshot and already-known process identifiers — no window server.
+    /// `targetBundleID` is resolved lazily after the synchronous pid-set
+    /// checks miss, so a hit on the event's target process never pays
+    /// `NSRunningApplication` on the tap thread.
+    static func excludes(scope: MouseExceptionScope,
+                         snapshot: LookupSnapshot,
+                         sourceProcessID: Int64,
+                         targetProcessID: Int64,
+                         targetBundleID: () -> String?,
+                         pointerBundleID: String?) -> Bool {
+        guard let exceptions = snapshot.lookups[scope], !exceptions.isEmpty else {
+            return false
+        }
+        if let pid = Self.sourceProcessID(sourceProcessID),
+           snapshot.sourceProcessIDs[scope]?.contains(pid) == true {
+            return true
+        }
+        if let pid = Self.sourceProcessID(targetProcessID),
+           snapshot.sourceProcessIDs[scope]?.contains(pid) == true {
+            return true
+        }
+        if isExcepted(targetBundleID(), exceptions: exceptions) {
+            return true
+        }
+        return isExcepted(pointerBundleID, exceptions: exceptions)
     }
 }
