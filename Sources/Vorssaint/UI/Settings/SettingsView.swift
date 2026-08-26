@@ -888,6 +888,7 @@ struct EnergySettings: View {
 
 struct MouseSettings: View {
     @ObservedObject private var l10n = L10n.shared
+    @ObservedObject private var features = FeatureRuntime.shared
     @ObservedObject private var permissions = Permissions.shared
     /// Status badges only — keep the set small so this page is not rebuilt on
     /// every unrelated service publish.

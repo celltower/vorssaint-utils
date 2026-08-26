@@ -172,14 +172,19 @@ final class MouseButtonShortcutService: ObservableObject {
     static func claimsSideWheel(_ input: Int64,
                                 at location: CGPoint,
                                 sourceProcessID: Int64,
+                                targetProcessID: Int64,
                                 eventTimestamp: UInt64) -> Bool {
         guard hasActiveSideWheelInterest else { return false }
         let service = shared
         guard service.isRunning,
               service.isCapturing || service.mappings[input] != nil else { return false }
         guard service.isCapturing
-            || !MouseAppExceptions.shared.excludesActionTarget(
-                .buttonShortcuts, at: location, sourceProcessID: sourceProcessID
+            || !MouseAppExceptions.shared.excludesPointerTarget(
+                .buttonShortcuts,
+                at: location,
+                sourceProcessID: sourceProcessID,
+                targetProcessID: targetProcessID,
+                pointerResolution: .cachedAsynchronous
             ) else { return false }
         service.preflightedSideWheelTimestamp = eventTimestamp
         service.preflightedSideWheelInput = input

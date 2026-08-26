@@ -1614,6 +1614,7 @@ struct MetricsTests {
             cachedPoint: .zero,
             cachedAt: -1)
         var targetBundleLookups = 0
+        var pointerBundleLookups = 0
         expect(MouseAppExceptionSupport.excludes(
                 scope: .smoothScroll,
                 snapshot: exceptionSnapshot,
@@ -1623,10 +1624,13 @@ struct MetricsTests {
                     targetBundleLookups += 1
                     return "com.example.excepted"
                 },
-                pointerBundleID: "com.example.front"),
+                pointerBundleID: {
+                    pointerBundleLookups += 1
+                    return "com.example.front"
+                }),
                "the first tick of an excepted target is excluded before the pointer cache warms")
-        expect(targetBundleLookups == 0,
-               "a pid-set hit never resolves the target bundle id on the tap path")
+        expect(targetBundleLookups == 0 && pointerBundleLookups == 0,
+               "a pid-set hit resolves neither bundle id on the tap path")
         expect(!MouseAppExceptionSupport.excludes(
                 scope: .smoothScroll,
                 snapshot: exceptionSnapshot,
@@ -1636,10 +1640,13 @@ struct MetricsTests {
                     targetBundleLookups += 1
                     return "com.example.other"
                 },
-                pointerBundleID: "com.example.front"),
+                pointerBundleID: {
+                    pointerBundleLookups += 1
+                    return "com.example.front"
+                }),
                "a non-excepted target still glides while frontmost differs")
-        expect(targetBundleLookups == 1,
-               "bundle id resolves only after both pid-set checks miss")
+        expect(targetBundleLookups == 1 && pointerBundleLookups == 1,
+               "bundle ids resolve only after both pid-set checks miss")
         expect(SmoothScrollSupport.isProcessAlive(0) == false,
                "pid 0 is never treated as a live scroll target")
         expect(SmoothScrollSupport.isProcessAlive(getpid()),
@@ -17942,6 +17949,32 @@ struct MetricsTests {
                 in: [frontWindow], at: CGPoint(x: 380, y: 380), ownProcessID: 9) == nil,
                "a pointer outside every window resolves to nothing")
 
+        var frontmostLookups = 0
+        let firstClickBundleID = MouseAppExceptionSupport.pointerBundleID(
+            in: [frontWindow, behindWindow],
+            at: pointer,
+            ownProcessID: 9,
+            bundleIDForProcess: { processID in
+                processID == frontWindow.processID ? "com.example.excepted" : nil
+            },
+            frontmostBundleID: {
+                frontmostLookups += 1
+                return "com.example.frontmost"
+            })
+        expect(firstClickBundleID == "com.example.excepted" && frontmostLookups == 0,
+               "the first click resolves the non-frontmost app under the pointer synchronously")
+        let desktopClickBundleID = MouseAppExceptionSupport.pointerBundleID(
+            in: [frontWindow],
+            at: CGPoint(x: 380, y: 380),
+            ownProcessID: 9,
+            bundleIDForProcess: { _ in nil },
+            frontmostBundleID: {
+                frontmostLookups += 1
+                return "com.example.frontmost"
+            })
+        expect(desktopClickBundleID == "com.example.frontmost" && frontmostLookups == 1,
+               "a click outside app windows falls back to the frontmost app")
+
         expect(MouseAppExceptionSupport.cacheHolds(region: frontWindow.frame, resolvedPoint: pointer,
                                                    resolvedAt: 10, point: CGPoint(x: 120, y: 120), now: 10.2),
                "a fresh answer keeps serving while the pointer stays inside its window")
@@ -17958,6 +17991,29 @@ struct MetricsTests {
                                                         resolvedAt: 10,
                                                         point: CGPoint(x: 101, y: 100), now: 10.2),
                "an answer of nothing only covers the exact spot it was resolved at")
+
+        let mouseExceptionsSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/MouseExceptions/MouseAppExceptions.swift",
+            encoding: .utf8)) ?? ""
+        let finishResolutionPrefix = mouseExceptionsSource
+            .components(separatedBy: "private func finishPointerResolution").last?
+            .components(separatedBy: "lock.withLock").first ?? ""
+        expect(finishResolutionPrefix.contains("let resolvedBundleID")
+                && finishResolutionPrefix.contains("NSRunningApplication")
+                && finishResolutionPrefix.contains("NSWorkspace.shared.frontmostApplication"),
+               "pointer resolution completes LaunchServices work before taking the snapshot lock")
+        expect(mouseExceptionsSource.contains(
+                "pointerResolution: PointerResolutionMode = .synchronous"),
+               "one-off click features resolve the app under the pointer on their first event")
+        let smoothScrollSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/SmoothScrollService.swift",
+            encoding: .utf8)) ?? ""
+        let scrollInverterSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/ScrollInverter.swift",
+            encoding: .utf8)) ?? ""
+        expect(smoothScrollSource.contains("pointerResolution: .cachedAsynchronous")
+                && scrollInverterSource.contains("pointerResolution: .cachedAsynchronous"),
+               "only high-frequency wheel taps opt into asynchronous pointer resolution")
 
         for language in AppLanguage.allCases {
             let strings = FeatureStrings.mouseExceptions(language)

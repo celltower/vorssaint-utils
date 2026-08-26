@@ -17,14 +17,24 @@ import CoreGraphics
 /// macOS delivers both the wheel and the click, and falls back to the app in
 /// front when the pointer is over no window of its own. Resolving asks the
 /// window server on a private queue, then caches the answer until the pointer
-/// leaves that window. Event taps never wait for that round-trip: they first
-/// consult the event's target process id (synchronously available) and only
-/// then the cached pointer answer / frontmost fallback.
+/// leaves that window. High-frequency wheel taps never wait for that
+/// round-trip: they first consult the event's process ids (synchronously
+/// available) and only then the cached pointer answer / frontmost fallback.
+/// One-off click features resolve a cache miss synchronously so their first
+/// click is judged against the actual app under the pointer.
 ///
 /// List mutations stay on the main thread; tap lookups read an immutable
 /// snapshot under a lock so a dedicated scroll thread stays race-free.
 final class MouseAppExceptions: ObservableObject {
     static let shared = MouseAppExceptions()
+
+    enum PointerResolutionMode {
+        /// One-off click features need the correct app on the first event.
+        case synchronous
+        /// High-frequency wheel taps use pid sets and the short-lived cache,
+        /// warming a miss away from the tap thread.
+        case cachedAsynchronous
+    }
 
     /// The stored lists, as bundle identifiers per feature.
     @Published private(set) var lists: [MouseExceptionScope: [String]] = [:]
@@ -113,19 +123,26 @@ final class MouseAppExceptions: ObservableObject {
     func excludesPointerTarget(_ scope: MouseExceptionScope,
                                at point: CGPoint,
                                sourceProcessID: Int64 = 0,
-                               targetProcessID: Int64 = 0) -> Bool {
+                               targetProcessID: Int64 = 0,
+                               pointerResolution: PointerResolutionMode = .synchronous) -> Bool {
         let snapshot = makeSnapshot()
         guard let exceptions = snapshot.lookups[scope], !exceptions.isEmpty else {
             return false
         }
-        let pointerIdentity = pointerIdentity(at: point, snapshot: snapshot)
         return MouseAppExceptionSupport.excludes(
             scope: scope,
             snapshot: snapshot,
             sourceProcessID: sourceProcessID,
             targetProcessID: targetProcessID,
             targetBundleID: { self.identity(forProcessID: targetProcessID) },
-            pointerBundleID: pointerIdentity)
+            pointerBundleID: {
+                switch pointerResolution {
+                case .synchronous:
+                    return self.synchronousPointerIdentity(at: point)
+                case .cachedAsynchronous:
+                    return self.cachedPointerIdentity(at: point, snapshot: snapshot)
+                }
+            })
     }
 
     /// True when the app under the pointer or the app in front is on this
@@ -156,6 +173,12 @@ final class MouseAppExceptions: ObservableObject {
     /// With every such feature off, unavailable or carrying an empty list, no
     /// workspace observer or source cache remains alive.
     func setSourceTracking(_ active: Bool, for scope: MouseExceptionScope) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.setSourceTracking(active, for: scope)
+            }
+            return
+        }
         if active {
             trackedSourceScopes.insert(scope)
         } else {
@@ -255,11 +278,29 @@ final class MouseAppExceptions: ObservableObject {
         return Self.identity(for: NSRunningApplication(processIdentifier: pid))
     }
 
-    /// The app that owns the window under the pointer. A cache miss schedules
-    /// the WindowServer query off the event-tap run loop and returns the app in
-    /// front for this event; subsequent wheel events use the resolved cache.
-    private func pointerIdentity(at point: CGPoint,
-                                 snapshot: MouseAppExceptionSupport.LookupSnapshot) -> String? {
+    /// Click features resolve synchronously: unlike a wheel coast, a first
+    /// click cannot wait for an asynchronous cache fill.
+    private func synchronousPointerIdentity(at point: CGPoint) -> String? {
+        MouseAppExceptionSupport.pointerBundleID(
+            in: Self.onScreenWindows(),
+            at: point,
+            ownProcessID: Self.ownProcessID,
+            bundleIDForProcess: {
+                Self.identity(for: NSRunningApplication(processIdentifier: $0))
+            },
+            frontmostBundleID: {
+                Self.identity(for: NSWorkspace.shared.frontmostApplication)
+            })
+    }
+
+    /// The app that owns the window under the pointer for a wheel event. A
+    /// cache miss schedules the WindowServer query off the event-tap run loop
+    /// and returns the app in front for this event; subsequent wheel events use
+    /// the resolved cache.
+    private func cachedPointerIdentity(
+        at point: CGPoint,
+        snapshot: MouseAppExceptionSupport.LookupSnapshot
+    ) -> String? {
         guard !snapshot.allEmpty else { return nil }
         let now = ProcessInfo.processInfo.systemUptime
         if MouseAppExceptionSupport.cacheHolds(region: snapshot.cachedRegion,
@@ -301,18 +342,23 @@ final class MouseAppExceptions: ObservableObject {
     private func finishPointerResolution(_ window: MouseAppExceptionSupport.Window?,
                                          at point: CGPoint,
                                          token: UInt64) {
+        // LaunchServices / workspace lookups must never run under `lock`:
+        // every wheel event briefly takes that lock to copy its snapshot.
+        let resolvedBundleID = window.flatMap {
+            Self.identity(for: NSRunningApplication(processIdentifier: $0.processID))
+        } ?? Self.identity(for: NSWorkspace.shared.frontmostApplication)
+        let resolvedAt = ProcessInfo.processInfo.systemUptime
+
         var followUp: CGPoint?
         lock.withLock {
             guard activeResolution == token else { return }
             activeResolution = nil
             guard !allEmpty else { return }
 
-            cachedIdentity = window.flatMap {
-                Self.identity(for: NSRunningApplication(processIdentifier: $0.processID))
-            } ?? Self.identity(for: NSWorkspace.shared.frontmostApplication)
+            cachedIdentity = resolvedBundleID
             cachedRegion = window?.frame
             cachedPoint = point
-            cachedAt = ProcessInfo.processInfo.systemUptime
+            cachedAt = resolvedAt
 
             if let latestRequestedPoint {
                 self.latestRequestedPoint = nil
