@@ -179,12 +179,11 @@ final class MouseButtonShortcutService: ObservableObject {
         guard service.isRunning,
               service.isCapturing || service.mappings[input] != nil else { return false }
         guard service.isCapturing
-            || !MouseAppExceptions.shared.excludesPointerTarget(
+            || !MouseAppExceptions.shared.excludesActionTarget(
                 .buttonShortcuts,
                 at: location,
                 sourceProcessID: sourceProcessID,
-                targetProcessID: targetProcessID,
-                pointerResolution: .cachedAsynchronous
+                targetProcessID: targetProcessID
             ) else { return false }
         service.preflightedSideWheelTimestamp = eventTimestamp
         service.preflightedSideWheelInput = input

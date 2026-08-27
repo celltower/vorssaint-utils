@@ -18014,6 +18014,12 @@ struct MetricsTests {
         expect(smoothScrollSource.contains("pointerResolution: .cachedAsynchronous")
                 && scrollInverterSource.contains("pointerResolution: .cachedAsynchronous"),
                "only high-frequency wheel taps opt into asynchronous pointer resolution")
+        let shortcutSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/MouseButtons/MouseButtonShortcutService.swift",
+            encoding: .utf8)) ?? ""
+        expect(!shortcutSource.contains("pointerResolution: .cachedAsynchronous")
+                && shortcutSource.contains("excludesActionTarget("),
+               "side-wheel preflight uses the same synchronous action check as its handler")
 
         for language in AppLanguage.allCases {
             let strings = FeatureStrings.mouseExceptions(language)
