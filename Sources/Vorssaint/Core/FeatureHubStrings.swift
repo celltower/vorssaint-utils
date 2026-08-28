@@ -860,7 +860,7 @@ extension FeatureHubStrings {
         descWindowLayout: "Fenster mit Kurzbefehlen oder Einrasten anordnen und durch Ziehen anpassen",
         descAutoQuit: "Beendet Apps, wenn das letzte Fenster schließt",
         descScrollInverter: "Kehrt die Richtung des Mausrads um",
-        descSmoothScroll: "Sanftes Mausrad-Scrollen mit Distanz, Beschleunigung und Dauer",
+        descSmoothScroll: "Sanftes Mausrad-Scrollen mit Distanz, Geschwindigkeit und Dauer",
         descMouseNavigation: "Seitentasten der Maus gehen vor und zurück",
         descMiddleClick: "Drei-Finger-Klick wirkt als Mittelklick",
         descKeyboardDebounce: "Ignoriert versehentliche doppelte Tastendrücke",

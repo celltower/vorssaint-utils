@@ -972,7 +972,7 @@ struct MouseSettings: View {
                             resetSmoothScrollFeel()
                         }
                     }
-                    if mouseScrollingExceptionsVisible {
+                    if smoothScrollEnabled {
                         MouseExceptionsList(scope: .smoothScroll)
                     }
                 }
@@ -1004,8 +1004,9 @@ struct MouseSettings: View {
                                 .foregroundStyle(.green)
                         }
                     }
-                    if !AppFeature.smoothScroll.isAvailable, mouseScrollingExceptionsVisible {
-                        MouseExceptionsList(scope: .smoothScroll)
+                    if scrollDirectionEnabled
+                        && (!AppFeature.smoothScroll.isAvailable || !smoothScrollEnabled) {
+                        MouseExceptionsList(scope: .scrollDirection)
                     }
                 }
                 .settingsSectionAnchor(.scrollDirection)
@@ -1020,8 +1021,6 @@ struct MouseSettings: View {
                 }
                 .settingsSectionAnchor(.scrollDirection)
             }
-
-
             if AppFeature.focusFollowsMouse.isAvailable {
                 Section(l10n.s.focusFollowsMouseName) {
                     Toggle(l10n.s.focusFollowsMouseName, isOn: $focusFollowsMouseEnabled)
@@ -1177,11 +1176,6 @@ struct MouseSettings: View {
             || (mouseClickDebounceEnabled && AppFeature.mouseClickDebounce.isAvailable)
             || (middleClickEnabled && AppFeature.middleClick.isAvailable)
         return anyEngaged && !permissions.accessibility
-    }
-
-    private var mouseScrollingExceptionsVisible: Bool {
-        (smoothScrollEnabled && AppFeature.smoothScroll.isAvailable)
-            || (scrollDirectionEnabled && AppFeature.scrollInverter.isAvailable)
     }
 
     private var scrollDirectionEnabled: Bool {

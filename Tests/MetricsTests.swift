@@ -1335,12 +1335,6 @@ struct MetricsTests {
 
         // MARK: Smooth scrolling
 
-        expect(SmoothScrollSupport.ticks(line: 1, fixedPoint: 1.0) == 1.0,
-               "a classic wheel tick reads the same from either delta field")
-        expect(SmoothScrollSupport.ticks(line: 0, fixedPoint: 0.25) == 0.25,
-               "high-resolution wheels keep their fractional ticks when the integer field truncates to zero")
-        expect(SmoothScrollSupport.ticks(line: -2, fixedPoint: 0) == -2,
-               "a zero fixed-point field falls back to the integer line delta")
         expect(abs(SmoothScrollSupport.impulse(delta: 1, step: 33.6, speed: 2.7) - 90.72) < 0.000001,
                "a weak notch is raised to the step then stretched by speed")
         expect(abs(SmoothScrollSupport.impulse(delta: 40, step: 33.6, speed: 2.7) - 108) < 0.000001,
@@ -1377,11 +1371,6 @@ struct MetricsTests {
         expect(SmoothScrollSupport.axes(vertical: 2, horizontal: -1, shiftPressed: true)
                == SmoothScrollSupport.Axes(vertical: 2, horizontal: -1),
                "Shift preserves a wheel event that already carries horizontal movement")
-        expect(abs(SmoothScrollSupport.frameTransition(base: 0.18, deltaTime: 1.0 / 60.0) - 0.18) < 0.000001,
-               "at 60 Hz the timed transition matches the base α")
-        expect(SmoothScrollSupport.frameTransition(base: 0.18, deltaTime: 1.0 / 120.0)
-                < SmoothScrollSupport.frameTransition(base: 0.18, deltaTime: 1.0 / 60.0),
-               "a 120 Hz frame advances less of the coast than a 60 Hz frame")
         expect(SmoothScrollSupport.transition(forDuration: 3.0) == 0.240,
                "the default duration maps to a soft lerp factor")
         expect(SmoothScrollSupport.transition(forDuration: 1.0) == 0.561,
@@ -1415,10 +1404,6 @@ struct MetricsTests {
         filter.reset()
         expect(filter.isSettled,
                "reset leaves the filter settled")
-        expect(SmoothScrollSupport.mustPassThroughRaw(accessibilityTrusted: false),
-               "without Accessibility the original wheel must pass through")
-        expect(!SmoothScrollSupport.mustPassThroughRaw(accessibilityTrusted: true),
-               "with Accessibility smoothing may swallow the wheel")
         expect(SmoothScrollSupport.sanitizedStep(0) == 39.69,
                "an unset step falls back to the default")
         expect(SmoothScrollSupport.sanitizedStep(500) == 100,
@@ -1457,10 +1442,13 @@ struct MetricsTests {
                "scroll acceleration ships at zero by default")
         expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.smoothScrollAcceleration),
                "scroll acceleration follows settings backups")
+        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollExceptions] == nil
+                && Defaults.registeredDefaults[DefaultsKey.scrollInverterExceptions] == nil,
+               "legacy scrolling exception keys remain migration-only")
         expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollVertical] as? Bool == true,
-               "vertical smooth axis ships off by default")
+               "vertical smoothing is selected when the feature is enabled")
         expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollHorizontal] as? Bool == true,
-               "horizontal smooth axis ships off by default")
+               "horizontal smoothing is selected when the feature is enabled")
         expect(SmoothScrollSupport.stepRangeText == "0.01 – 100.00",
                "step range text matches Mos slider bounds")
         expect(SmoothScrollSupport.speedRangeText == "1.00 – 10.00",
@@ -1609,44 +1597,57 @@ struct MetricsTests {
             lookups: [.smoothScroll: ["com.example.excepted"]],
             sourceProcessIDs: [.smoothScroll: [55]],
             allEmpty: false,
-            cachedBundleID: "com.example.front",
+            cachedIdentity: "com.example.front",
             cachedRegion: nil,
             cachedPoint: .zero,
             cachedAt: -1)
-        var targetBundleLookups = 0
-        var pointerBundleLookups = 0
+        var targetIdentityLookups = 0
+        var pointerIdentityLookups = 0
         expect(MouseAppExceptionSupport.excludes(
                 scope: .smoothScroll,
                 snapshot: exceptionSnapshot,
                 sourceProcessID: 0,
                 targetProcessID: 55,
-                targetBundleID: {
-                    targetBundleLookups += 1
+                targetIdentity: {
+                    targetIdentityLookups += 1
                     return "com.example.excepted"
                 },
-                pointerBundleID: {
-                    pointerBundleLookups += 1
+                pointerIdentity: {
+                    pointerIdentityLookups += 1
                     return "com.example.front"
                 }),
                "the first tick of an excepted target is excluded before the pointer cache warms")
-        expect(targetBundleLookups == 0 && pointerBundleLookups == 0,
-               "a pid-set hit resolves neither bundle id on the tap path")
+        expect(targetIdentityLookups == 0 && pointerIdentityLookups == 0,
+               "a pid-set hit resolves neither identity on the tap path")
         expect(!MouseAppExceptionSupport.excludes(
                 scope: .smoothScroll,
                 snapshot: exceptionSnapshot,
                 sourceProcessID: 0,
                 targetProcessID: 56,
-                targetBundleID: {
-                    targetBundleLookups += 1
+                targetIdentity: {
+                    targetIdentityLookups += 1
                     return "com.example.other"
                 },
-                pointerBundleID: {
-                    pointerBundleLookups += 1
+                pointerIdentity: {
+                    pointerIdentityLookups += 1
                     return "com.example.front"
                 }),
                "a non-excepted target still glides while frontmost differs")
-        expect(targetBundleLookups == 1 && pointerBundleLookups == 1,
-               "bundle ids resolve only after both pid-set checks miss")
+        expect(targetIdentityLookups == 1 && pointerIdentityLookups == 1,
+               "identities resolve only after both pid-set checks miss")
+        expect(!MouseAppExceptionSupport.excludes(
+                scope: .smoothScroll,
+                snapshot: exceptionSnapshot,
+                sourceProcessID: 0,
+                targetProcessID: 56,
+                targetIdentity: nil,
+                pointerIdentity: {
+                    pointerIdentityLookups += 1
+                    return "com.example.front"
+                }),
+               "an asynchronous wheel miss skips target identity resolution")
+        expect(targetIdentityLookups == 1 && pointerIdentityLookups == 2,
+               "the asynchronous wheel path never invokes a target identity resolver")
         expect(SmoothScrollSupport.isProcessAlive(0) == false,
                "pid 0 is never treated as a live scroll target")
         expect(SmoothScrollSupport.isProcessAlive(getpid()),
@@ -1701,29 +1702,6 @@ struct MetricsTests {
                "unaccelerated mode falls back for drivers that only provide point deltas")
         expect(ScrollWheelSupport.pointsPerLine == 10,
                "one scroll line spans ten points for other wheel helpers")
-        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 4.0, pointDelta: 40) == 40,
-               "the point field wins, so no assumption about points per line is made")
-        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 0.35, pointDelta: 0) == 0.35,
-               "fixed-point is used as-is when point is empty (Mos-compatible)")
-        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 0, pointDelta: 12) == 12,
-               "a driver that fills in only whole points still glides")
-        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: 0, pointDelta: 0) == 0,
-               "an empty event asks for no distance")
-        expect(SmoothScrollSupport.continuousBase(fixedPointDelta: .nan, pointDelta: 0) == 0,
-               "a nonsense delta asks for no distance")
-        expect(abs(SmoothScrollSupport.continuousImpulse(
-            fixedPointDelta: 4.0, pointDelta: 40, step: 33.6, speed: 2.7) - 108) < 0.000001,
-               "a continuous wheel is stretched by speed once")
-        expect(abs(SmoothScrollSupport.continuousImpulse(
-            fixedPointDelta: -0.5, pointDelta: -5, step: 33.6, speed: 1.0) + 33.6) < 0.000001,
-               "a short continuous reading is raised to the step floor")
-        let continuousAxis = SmoothScrollSupport.apply(
-            impulse: SmoothScrollSupport.continuousImpulse(
-                fixedPointDelta: 4.0, pointDelta: 40, step: 33.6, speed: 2.7),
-            to: SmoothScrollSupport.AxisState())
-        expect(abs(continuousAxis.buffer - 108) < 0.000001,
-               "the continuous impulse lands in the buffer exactly once")
-
         // Touch devices stay out of the smooth path.
         expect(!ScrollWheelSupport.isMouseWheel(
             ScrollWheelEventTraits(isContinuous: true, momentumPhase: 1, scrollPhase: 0, scrollCount: 0),
@@ -1737,45 +1715,6 @@ struct MetricsTests {
             ScrollWheelEventTraits(isContinuous: false, momentumPhase: 0, scrollPhase: 0, scrollCount: 0),
             secondsSinceLastGesturePhase: nil),
                "discrete wheel ticks remain mouse input")
-
-        // Fractions are carried instead of rounded away, so the glide
-        // delivers the whole distance it was given.
-        var carriedTotal: Double = 0
-        var carry: Double = 0
-        for _ in 0..<10 {
-            let frame = SmoothScrollSupport.wholePixels(0.6, carry: carry)
-            carriedTotal += frame.pixels
-            carry = frame.carry
-        }
-        expect(abs(carriedTotal + carry - 6) < 0.000001,
-               "ten six-tenths of a pixel are all still there, posted or waiting")
-        expect(carriedTotal >= 5,
-               "never more than one pixel is left waiting")
-        expect(SmoothScrollSupport.wholePixels(0.4, carry: 0).pixels == 0,
-               "a fraction alone posts nothing yet")
-        expect(SmoothScrollSupport.wholePixels(0.4, carry: 0).carry == 0.4,
-               "the fraction is kept for the next frame")
-        expect(SmoothScrollSupport.wholePixels(-1.5, carry: 0).pixels == -1,
-               "negative frames keep their whole pixels")
-        expect(SmoothScrollSupport.wholePixels(-1.5, carry: 0).carry == -0.5,
-               "negative frames carry their fraction")
-        expect(SmoothScrollSupport.wholePixels(.infinity, carry: 0).pixels == 0,
-               "an impossible frame posts nothing")
-        expect(SmoothScrollSupport.finalPixels(0.4, carry: 0.3) == 1,
-               "the landing frame spends the leftover instead of dropping it")
-        expect(SmoothScrollSupport.finalPixels(-0.4, carry: -0.3) == -1,
-               "the landing frame spends it in either direction")
-        expect(SmoothScrollSupport.finalPixels(0.2, carry: 0) == 0,
-               "a landing frame with almost nothing left posts nothing")
-        expect(SmoothScrollSupport.finalPixels(.infinity, carry: 0) == 0,
-               "an impossible landing frame posts nothing")
-        expect(SmoothScrollSupport.carry(0.6, continuing: 5) == 0.6,
-               "leftovers survive while the direction holds")
-        expect(SmoothScrollSupport.carry(0.6, continuing: -5) == 0,
-               "reversing direction drops the leftovers")
-        expect(SmoothScrollSupport.carry(0.6, continuing: 0) == 0.6,
-               "an empty event leaves the leftovers alone")
-
 
         expect(FocusFollowsMouseSupport.sanitizedDelay(0)
                 == FocusFollowsMouseSupport.delayRange.lowerBound
@@ -17950,25 +17889,25 @@ struct MetricsTests {
                "a pointer outside every window resolves to nothing")
 
         var frontmostLookups = 0
-        let firstClickBundleID = MouseAppExceptionSupport.pointerBundleID(
+        let firstClickBundleID = MouseAppExceptionSupport.pointerIdentity(
             in: [frontWindow, behindWindow],
             at: pointer,
             ownProcessID: 9,
-            bundleIDForProcess: { processID in
+            identityForProcess: { processID in
                 processID == frontWindow.processID ? "com.example.excepted" : nil
             },
-            frontmostBundleID: {
+            frontmostIdentity: {
                 frontmostLookups += 1
                 return "com.example.frontmost"
             })
         expect(firstClickBundleID == "com.example.excepted" && frontmostLookups == 0,
                "the first click resolves the non-frontmost app under the pointer synchronously")
-        let desktopClickBundleID = MouseAppExceptionSupport.pointerBundleID(
+        let desktopClickBundleID = MouseAppExceptionSupport.pointerIdentity(
             in: [frontWindow],
             at: CGPoint(x: 380, y: 380),
             ownProcessID: 9,
-            bundleIDForProcess: { _ in nil },
-            frontmostBundleID: {
+            identityForProcess: { _ in nil },
+            frontmostIdentity: {
                 frontmostLookups += 1
                 return "com.example.frontmost"
             })
@@ -17998,13 +17937,15 @@ struct MetricsTests {
         let finishResolutionPrefix = mouseExceptionsSource
             .components(separatedBy: "private func finishPointerResolution").last?
             .components(separatedBy: "lock.withLock").first ?? ""
-        expect(finishResolutionPrefix.contains("let resolvedBundleID")
+        expect(finishResolutionPrefix.contains("let resolvedIdentity")
                 && finishResolutionPrefix.contains("NSRunningApplication")
                 && finishResolutionPrefix.contains("NSWorkspace.shared.frontmostApplication"),
                "pointer resolution completes LaunchServices work before taking the snapshot lock")
         expect(mouseExceptionsSource.contains(
-                "pointerResolution: PointerResolutionMode = .synchronous"),
-               "one-off click features resolve the app under the pointer on their first event")
+                "pointerResolution: PointerResolutionMode = .synchronous")
+                && mouseExceptionsSource.contains(
+                    "case .cachedAsynchronous:\n            targetIdentity = nil"),
+               "clicks resolve synchronously while wheel taps have no target identity resolver")
         let smoothScrollSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/SmoothScrollService.swift",
             encoding: .utf8)) ?? ""

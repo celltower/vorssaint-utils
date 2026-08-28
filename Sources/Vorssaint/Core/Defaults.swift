@@ -64,7 +64,7 @@ enum DefaultsKey {
     // and which source to take back after a crash.
     static let superKeyMappingApplied = "superKeyMappingApplied"
     static let superKeyMappedSource = "superKeyMappedSource"
-    // One list of bundle ids per mouse feature: apps it leaves alone (issue #358).
+    // Mouse app identities (bundle ids or executable paths) left alone (issue #358).
     static let smoothScrollExceptions = "smoothScrollExceptions"
     static let mouseScrollingExceptions = "mouseScrollingExceptions"
     static let scrollInverterExceptions = "scrollInverterExceptions"
@@ -830,7 +830,6 @@ enum Defaults {
         DefaultsKey.superKeySource: SuperKeySource.capsLock.rawValue,
         DefaultsKey.superKeyModifiers: SuperKeySupport.defaultModifierStorageValue,
         DefaultsKey.superKeySoloAction: SuperKeySoloAction.none.rawValue,
-        DefaultsKey.smoothScrollExceptions: [String](),
         DefaultsKey.mouseScrollingExceptions: [String](),
         DefaultsKey.scrollInverterExceptions: [String](),
         DefaultsKey.focusFollowsMouseExceptions: [String](),

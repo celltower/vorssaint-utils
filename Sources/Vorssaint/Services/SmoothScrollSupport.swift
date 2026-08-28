@@ -172,8 +172,6 @@ enum SmoothScrollSupport {
         var horizontal = AxisState()
         var verticalFilter = PeakFilter()
         var horizontalFilter = PeakFilter()
-        var carryVertical: Double = 0
-        var carryHorizontal: Double = 0
         var currentFlagsRaw: UInt64 = 0
         var currentTargetProcessID: Int32 = 0
         var glideFromContinuous = false
@@ -187,8 +185,6 @@ enum SmoothScrollSupport {
             horizontal.reset()
             verticalFilter.reset()
             horizontalFilter.reset()
-            carryVertical = 0
-            carryHorizontal = 0
         }
 
         mutating func stop() {
@@ -205,12 +201,10 @@ enum SmoothScrollSupport {
             if !preferences.smoothVertical {
                 vertical.reset()
                 verticalFilter.reset()
-                carryVertical = 0
             }
             if !preferences.smoothHorizontal {
                 horizontal.reset()
                 horizontalFilter.reset()
-                carryHorizontal = 0
             }
         }
     }
@@ -224,13 +218,6 @@ enum SmoothScrollSupport {
         var flagsRaw: UInt64
     }
 
-    /// The tick count of a discrete wheel event. High-resolution wheels
-    /// report fractions of a line in the fixed-point field while the integer
-    /// field truncates to zero, so the fixed-point value wins when present.
-    static func ticks(line: Double, fixedPoint: Double) -> Double {
-        fixedPoint != 0 ? fixedPoint : line
-    }
-
     /// Maps the duration slider onto the per-frame lerp factor α.
     /// `α = 1 - sqrt(duration / upperLimit)`, rounded to three decimals —
     /// same mapping Mos uses (`generateDurationTransition`).
@@ -239,17 +226,6 @@ enum SmoothScrollSupport {
         let alpha = 1 - (d / durationUpperLimit).squareRoot()
         guard alpha.isFinite else { return transition(forDuration: defaultDuration) }
         return (alpha * 1000).rounded() / 1000
-    }
-
-    /// Scales a DisplayLink-style α across an irregular timer interval so a
-    /// fallback 60 Hz timer still approximates wall-clock coast length. The
-    /// live path feeds DisplayLink frames with raw α (no scaling), like Mos.
-    static func frameTransition(base: Double, deltaTime: Double) -> Double {
-        guard base.isFinite, base > 0 else { return 0 }
-        let dt = min(max(deltaTime, 1.0 / 240.0), 1.0 / 20.0)
-        let factor = 1 - pow(1 - min(base, 0.999), dt * 60.0)
-        guard factor.isFinite else { return base }
-        return min(max(factor, 0), 1)
     }
 
     /// Mos field priority for one axis: point → fixed-point → line.
@@ -286,11 +262,6 @@ enum SmoothScrollSupport {
         return result.isFinite ? result : rawNormalized
     }
 
-    /// Convenience when only the continuous fields are present.
-    static func continuousBase(fixedPointDelta: Double, pointDelta: Double) -> Double {
-        usableValue(line: 0, fixedPoint: fixedPointDelta, point: pointDelta)
-    }
-
     /// Distance added to the glide buffer for one wheel reading. Values
     /// smaller than `step` are raised to it (`max(magnitude, step)`), then
     /// speed stretches the result — same order as Mos normalize → `* speed`.
@@ -302,17 +273,6 @@ enum SmoothScrollSupport {
         let usable = delta > 0 ? magnitude : -magnitude
         let result = usable * speedValue
         return result.isFinite ? result : 0
-    }
-
-    /// Convenience for the continuous path: Mos usable fields, then step/speed.
-    static func continuousImpulse(fixedPointDelta: Double,
-                                  pointDelta: Double,
-                                  step: Double,
-                                  speed: Double) -> Double {
-        impulse(delta: continuousBase(fixedPointDelta: fixedPointDelta,
-                                      pointDelta: pointDelta),
-                step: step,
-                speed: speed)
     }
 
     /// Applies one impulse to an axis. Same-direction ticks accumulate;
@@ -349,33 +309,6 @@ enum SmoothScrollSupport {
             next.current = next.buffer
         }
         return (next, landed)
-    }
-
-    /// Splits a frame's distance into whole pixels to post and the fraction
-    /// to carry into the next one. Rounding each frame on its own would drop
-    /// up to half a pixel every time, which a fine-grained wheel feels as
-    /// distance that never arrives.
-    static func wholePixels(_ distance: Double, carry: Double) -> (pixels: Double, carry: Double) {
-        let total = distance + carry
-        guard total.isFinite else { return (0, 0) }
-        let whole = total.rounded(.towardZero)
-        return (whole, total - whole)
-    }
-
-    /// The last frame of a glide rounds its leftover out instead of carrying
-    /// it forward, because there is no next frame to spend it in.
-    static func finalPixels(_ distance: Double, carry: Double) -> Double {
-        let total = distance + carry
-        guard total.isFinite else { return 0 }
-        return total.rounded(.toNearestOrAwayFromZero)
-    }
-
-    /// Leftover fractions only help while the glide keeps its direction; a
-    /// reversal drops them so the first pixel of the new direction is not
-    /// eaten by what the old one left behind.
-    static func carry(_ current: Double, continuing distance: Double) -> Double {
-        guard distance != 0, current != 0, (distance < 0) != (current < 0) else { return current }
-        return 0
     }
 
     /// A vertical wheel tick with Shift held scrolls sideways instead. That
@@ -494,8 +427,6 @@ enum SmoothScrollSupport {
         if !resets.isEmpty {
             next.resetTail()
         }
-        next.carryVertical = carry(next.carryVertical, continuing: plan.verticalImpulse)
-        next.carryHorizontal = carry(next.carryHorizontal, continuing: plan.horizontalImpulse)
         next.vertical = apply(impulse: plan.verticalImpulse, to: next.vertical)
         next.horizontal = apply(impulse: plan.horizontalImpulse, to: next.horizontal)
         next.currentFlagsRaw = flagsRaw
@@ -580,14 +511,8 @@ enum SmoothScrollSupport {
     /// True when a process id is still live enough to receive posted events.
     static func isProcessAlive(_ processID: Int32) -> Bool {
         guard processID > 0 else { return false }
-        return kill(processID, 0) == 0
-    }
-
-    /// When Accessibility is gone, a wheel event that would be smoothed must
-    /// pass through raw instead. Keeps scrolling usable without inventing a
-    /// smooth coast we are no longer allowed to deliver.
-    static func mustPassThroughRaw(accessibilityTrusted: Bool) -> Bool {
-        !accessibilityTrusted
+        let result = kill(processID, 0)
+        return result == 0 || errno == EPERM
     }
 
     /// Sum of posted whole/final pixels across a sequence of frames. Used by

@@ -108,17 +108,17 @@ enum MouseAppExceptionSupport {
     /// path because one missed click cannot be repaired by a cache warmed for
     /// the next event. The closures keep AppKit / workspace access out of the
     /// pure geometry test and make the first-click behavior testable.
-    static func pointerBundleID(in windows: [Window],
+    static func pointerIdentity(in windows: [Window],
                                 at point: CGPoint,
                                 ownProcessID: Int32,
-                                bundleIDForProcess: (Int32) -> String?,
-                                frontmostBundleID: () -> String?) -> String? {
+                                identityForProcess: (Int32) -> String?,
+                                frontmostIdentity: () -> String?) -> String? {
         guard let window = pointerWindow(in: windows,
                                          at: point,
                                          ownProcessID: ownProcessID) else {
-            return frontmostBundleID()
+            return frontmostIdentity()
         }
-        return bundleIDForProcess(window.processID) ?? frontmostBundleID()
+        return identityForProcess(window.processID) ?? frontmostIdentity()
     }
 
     /// Whether the previous answer still applies. A window answers while the
@@ -137,9 +137,9 @@ enum MouseAppExceptionSupport {
         return region.contains(point)
     }
 
-    static func isExcepted(_ bundleID: String?, exceptions: Set<String>) -> Bool {
-        guard let bundleID, !exceptions.isEmpty else { return false }
-        return exceptions.contains(bundleID)
+    static func isExcepted(_ identity: String?, exceptions: Set<String>) -> Bool {
+        guard let identity, !exceptions.isEmpty else { return false }
+        return exceptions.contains(identity)
     }
 
     /// A program that is not packaged as an app has no bundle identifier at
@@ -216,8 +216,8 @@ enum MouseAppExceptionSupport {
         return Int32(exactly: rawValue)
     }
 
-    static func isExcepted(_ bundleIDs: [String], exceptions: Set<String>) -> Bool {
-        bundleIDs.contains(where: exceptions.contains)
+    static func isExcepted(_ identities: [String], exceptions: Set<String>) -> Bool {
+        identities.contains(where: exceptions.contains)
     }
 
     /// Immutable answer the scroll taps consult. Built under the exceptions
@@ -226,7 +226,7 @@ enum MouseAppExceptionSupport {
         var lookups: [MouseExceptionScope: Set<String>]
         var sourceProcessIDs: [MouseExceptionScope: Set<Int32>]
         var allEmpty: Bool
-        var cachedBundleID: String?
+        var cachedIdentity: String?
         var cachedRegion: CGRect?
         var cachedPoint: CGPoint
         var cachedAt: TimeInterval
@@ -234,7 +234,7 @@ enum MouseAppExceptionSupport {
         static let empty = LookupSnapshot(lookups: [:],
                                           sourceProcessIDs: [:],
                                           allEmpty: true,
-                                          cachedBundleID: nil,
+                                          cachedIdentity: nil,
                                           cachedRegion: nil,
                                           cachedPoint: .zero,
                                           cachedAt: -1)
@@ -242,15 +242,15 @@ enum MouseAppExceptionSupport {
 
     /// Resolves whether a scope excludes the pointer target using only the
     /// snapshot and already-known process identifiers — no window server.
-    /// Bundle ids are resolved lazily after the synchronous pid-set checks
-    /// miss, so a hit on the event's target process never pays workspace or
-    /// WindowServer work on the tap thread.
+    /// Identities are resolved lazily after the synchronous pid-set checks
+    /// miss. Wheel callers pass no target resolver at all, so their tap path
+    /// never pays AppKit or filesystem work for an event target.
     static func excludes(scope: MouseExceptionScope,
                          snapshot: LookupSnapshot,
                          sourceProcessID: Int64,
                          targetProcessID: Int64,
-                         targetBundleID: () -> String?,
-                         pointerBundleID: () -> String?) -> Bool {
+                         targetIdentity: (() -> String?)?,
+                         pointerIdentity: () -> String?) -> Bool {
         guard let exceptions = snapshot.lookups[scope], !exceptions.isEmpty else {
             return false
         }
@@ -262,9 +262,10 @@ enum MouseAppExceptionSupport {
            snapshot.sourceProcessIDs[scope]?.contains(pid) == true {
             return true
         }
-        if isExcepted(targetBundleID(), exceptions: exceptions) {
+        if let targetIdentity,
+           isExcepted(targetIdentity(), exceptions: exceptions) {
             return true
         }
-        return isExcepted(pointerBundleID(), exceptions: exceptions)
+        return isExcepted(pointerIdentity(), exceptions: exceptions)
     }
 }
