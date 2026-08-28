@@ -210,10 +210,16 @@ enum SettingsBackupSupport {
     ///
     /// Driven from `MouseExceptionScope.allCases` rather than a list of keys
     /// spelled here, so a scope that renames its key, or two scopes that come
-    /// to share one, are covered without this file being edited.
+    /// to share one, are covered without this file being edited. The two
+    /// legacy scroll lists stay registered for older backups even though no
+    /// scope names them anymore — they have to be unioned in, or a
+    /// hand-edited file can plant an executable path that launch migration
+    /// then folds into the shared key.
     private static func portableMouseExceptions(_ source: [String: Any]) -> [String: Any] {
         var settings = source
-        for key in Set(MouseExceptionScope.allCases.map(\.defaultsKey)) {
+        let keys = Set(MouseExceptionScope.allCases.map(\.defaultsKey))
+            .union([DefaultsKey.smoothScrollExceptions, DefaultsKey.scrollInverterExceptions])
+        for key in keys {
             guard let stored = settings[key] as? [String] else { continue }
             let portable = stored.filter { !MouseAppExceptionSupport.isExecutablePathIdentity($0) }
             guard portable.count != stored.count else { continue }

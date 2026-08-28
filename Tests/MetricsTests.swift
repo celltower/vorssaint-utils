@@ -17601,9 +17601,11 @@ struct MetricsTests {
             expect(suite.stringArray(forKey: DefaultsKey.mouseScrollingExceptions)
                     == ["com.example.shared", "com.example.smooth", "com.example.direction"],
                    "legacy scrolling exception lists merge into one ordered list")
-            expect(suite.object(forKey: DefaultsKey.smoothScrollExceptions) == nil
-                    && suite.object(forKey: DefaultsKey.scrollInverterExceptions) == nil,
-                   "legacy scrolling lists are cleared after migration")
+            expect(suite.stringArray(forKey: DefaultsKey.smoothScrollExceptions)
+                    == ["com.example.shared", "com.example.smooth", "com.example.direction"]
+                    && suite.stringArray(forKey: DefaultsKey.scrollInverterExceptions)
+                        == ["com.example.shared", "com.example.smooth", "com.example.direction"],
+                   "legacy scrolling lists mirror the shared list for downgrade restores")
         }
         do {
             // A backup written by a current release still carries the split
@@ -17631,9 +17633,11 @@ struct MetricsTests {
             Defaults.migrateMouseScrollingExceptions(in: suite)
             expect(suite.stringArray(forKey: DefaultsKey.mouseScrollingExceptions)
                     == ["com.example.smooth", "com.example.direction"]
-                    && suite.object(forKey: DefaultsKey.smoothScrollExceptions) == nil
-                    && suite.object(forKey: DefaultsKey.scrollInverterExceptions) == nil,
-                   "restored legacy scrolling lists merge into the shared key on the next launch")
+                    && suite.stringArray(forKey: DefaultsKey.smoothScrollExceptions)
+                        == ["com.example.smooth", "com.example.direction"]
+                    && suite.stringArray(forKey: DefaultsKey.scrollInverterExceptions)
+                        == ["com.example.smooth", "com.example.direction"],
+                   "restored legacy scrolling lists merge into the shared key and stay mirrored")
         }
         expect(MouseExceptionScope.smoothScroll.feature == .smoothScroll
                 && MouseExceptionScope.scrollDirection.feature == .scrollInverter
@@ -18249,11 +18253,13 @@ struct MetricsTests {
         // resolved path of a program that has none. The path carries the short
         // username and names nothing on another Mac, and `valueLooksRight`
         // cannot see it: ["com.apple.Safari", "/Users/.../java"] is a perfectly
-        // good [String]. Driven from allCases, so a scope that renames its key
-        // or two scopes that come to share one stay covered.
+        // good [String]. Driven from allCases plus the two legacy scroll lists
+        // kept for older backups — those keys are still in exportKeys even
+        // though no scope names them anymore.
         let localJavaPath = "/Users/josh/Library/Application Support/PrismLauncher"
             + "/java/jre-legacy/zulu-8.jre/Contents/Home/bin/java"
         let exceptionKeys = Set(MouseExceptionScope.allCases.map(\.defaultsKey))
+            .union([DefaultsKey.smoothScrollExceptions, DefaultsKey.scrollInverterExceptions])
         let mixedExceptionBackup = SettingsBackupSupport.payload(appVersion: "test") { key in
             exceptionKeys.contains(key) ? ["com.apple.Safari", localJavaPath] : nil
         }

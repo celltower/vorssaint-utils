@@ -832,8 +832,8 @@ enum Defaults {
         DefaultsKey.superKeySoloAction: SuperKeySoloAction.none.rawValue,
         // Legacy scroll-exception keys stay registered so settings backups from
         // older builds still carry them through exportKeys()/sanitizedSettings.
-        // Launch migration folds them into mouseScrollingExceptions and clears
-        // the old keys; after that they export as empty arrays.
+        // Launch migration folds them into mouseScrollingExceptions and mirrors
+        // the shared list back, so a downgrade restore still sees the lists.
         DefaultsKey.smoothScrollExceptions: [String](),
         DefaultsKey.mouseScrollingExceptions: [String](),
         DefaultsKey.scrollInverterExceptions: [String](),
@@ -1371,10 +1371,12 @@ enum Defaults {
 
     /// Smooth scrolling and reverse scrolling used to keep separate exception
     /// lists (#358). They now share one key. This folds both legacy lists (and
-    /// any already-shared entries) into `mouseScrollingExceptions` and clears
-    /// the old keys. That can broaden an existing exception: an app that was
-    /// only on the smooth-scroll list also stands down reverse scrolling after
-    /// upgrade, and the reverse — the split is not recoverable.
+    /// any already-shared entries) into `mouseScrollingExceptions` and mirrors
+    /// that shared list back onto the old keys so a settings backup from this
+    /// build still restores both lists on a pre-upgrade release. That can
+    /// broaden an existing exception: an app that was only on the smooth-scroll
+    /// list also stands down reverse scrolling after upgrade, and the reverse
+    /// — the split is not recoverable.
     static func migrateMouseScrollingExceptions(in defaults: UserDefaults) {
         let current = defaults.stringArray(forKey: DefaultsKey.mouseScrollingExceptions) ?? []
         let smooth = defaults.stringArray(forKey: DefaultsKey.smoothScrollExceptions) ?? []
@@ -1385,8 +1387,11 @@ enum Defaults {
             || defaults.object(forKey: DefaultsKey.mouseScrollingExceptions) != nil {
             defaults.set(merged, forKey: DefaultsKey.mouseScrollingExceptions)
         }
-        defaults.removeObject(forKey: DefaultsKey.smoothScrollExceptions)
-        defaults.removeObject(forKey: DefaultsKey.scrollInverterExceptions)
+        // Keep the legacy pair in lockstep with the shared key so export still
+        // carries a list an older build can read. Clearing them would make
+        // every backup from this build wipe scroll exceptions on downgrade.
+        defaults.set(merged, forKey: DefaultsKey.smoothScrollExceptions)
+        defaults.set(merged, forKey: DefaultsKey.scrollInverterExceptions)
     }
 
     private static func rewriteSmoothScrollNumber(in defaults: UserDefaults,
