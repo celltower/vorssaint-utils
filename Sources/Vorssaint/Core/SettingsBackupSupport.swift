@@ -183,11 +183,13 @@ enum SettingsBackupSupport {
     /// paths across, applying a backup would delete the entries for programs
     /// that are not apps, including on the Mac the backup was written on. The
     /// restored order wins and a carried path already present is not doubled,
-    /// so applying the same backup twice lands on the same list. All five keys
-    /// register `[String]()`, so after the clear the read is `[]` rather than
-    /// the pre-restore list -- which is what makes this safe on a backup
-    /// written before these keys existed, and not only on one that carries an
-    /// empty array. (Reasoning from @PathGao's review.)
+    /// so applying the same backup twice lands on the same list. Every mouse
+    /// exception key that `exportKeys()` can clear — the four live scope keys
+    /// plus the two legacy scroll lists kept for older backups — registers
+    /// `[String]()`, so after the clear the read is `[]` rather than the
+    /// pre-restore list. That is what makes this safe on a backup written
+    /// before these keys existed, and not only on one that carries an empty
+    /// array. (Reasoning from @PathGao's review.)
     static func restoredExceptionList(restored: [String], carried: [String]) -> [String] {
         restored + carried.filter { !restored.contains($0) }
     }

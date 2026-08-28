@@ -1442,9 +1442,11 @@ struct MetricsTests {
                "scroll acceleration ships at zero by default")
         expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.smoothScrollAcceleration),
                "scroll acceleration follows settings backups")
-        expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollExceptions] == nil
-                && Defaults.registeredDefaults[DefaultsKey.scrollInverterExceptions] == nil,
-               "legacy scrolling exception keys remain migration-only")
+        expect((Defaults.registeredDefaults[DefaultsKey.smoothScrollExceptions] as? [String])?.isEmpty == true
+                && (Defaults.registeredDefaults[DefaultsKey.scrollInverterExceptions] as? [String])?.isEmpty == true
+                && SettingsBackupSupport.exportKeys().contains(DefaultsKey.smoothScrollExceptions)
+                && SettingsBackupSupport.exportKeys().contains(DefaultsKey.scrollInverterExceptions),
+               "legacy scrolling exception keys stay in backups so older restore files keep their lists")
         expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollVertical] as? Bool == true,
                "vertical smoothing is selected when the feature is enabled")
         expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollHorizontal] as? Bool == true,
@@ -17603,6 +17605,36 @@ struct MetricsTests {
                     && suite.object(forKey: DefaultsKey.scrollInverterExceptions) == nil,
                    "legacy scrolling lists are cleared after migration")
         }
+        do {
+            // A backup written by a current release still carries the split
+            // lists. Import must keep them long enough for launch migration
+            // to fold them into the shared key.
+            let restored = SettingsBackupSupport.sanitizedSettings(from: [
+                SettingsBackupSupport.formatVersionKey: 1,
+                SettingsBackupSupport.settingsKey: [
+                    DefaultsKey.smoothScrollExceptions: ["com.example.smooth"],
+                    DefaultsKey.scrollInverterExceptions: ["com.example.direction"],
+                ] as [String: Any],
+            ])
+            expect(restored?[DefaultsKey.smoothScrollExceptions] as? [String]
+                    == ["com.example.smooth"]
+                    && restored?[DefaultsKey.scrollInverterExceptions] as? [String]
+                        == ["com.example.direction"],
+                   "an older settings backup still restores both legacy scrolling lists")
+            let suiteName = "com.vorssaint.tests.mouse-scroll-backup.\(UUID().uuidString)"
+            let suite = UserDefaults(suiteName: suiteName)!
+            defer { suite.removePersistentDomain(forName: suiteName) }
+            suite.set(restored?[DefaultsKey.smoothScrollExceptions] as? [String] ?? [],
+                      forKey: DefaultsKey.smoothScrollExceptions)
+            suite.set(restored?[DefaultsKey.scrollInverterExceptions] as? [String] ?? [],
+                      forKey: DefaultsKey.scrollInverterExceptions)
+            Defaults.migrateMouseScrollingExceptions(in: suite)
+            expect(suite.stringArray(forKey: DefaultsKey.mouseScrollingExceptions)
+                    == ["com.example.smooth", "com.example.direction"]
+                    && suite.object(forKey: DefaultsKey.smoothScrollExceptions) == nil
+                    && suite.object(forKey: DefaultsKey.scrollInverterExceptions) == nil,
+                   "restored legacy scrolling lists merge into the shared key on the next launch")
+        }
         expect(MouseExceptionScope.smoothScroll.feature == .smoothScroll
                 && MouseExceptionScope.scrollDirection.feature == .scrollInverter
                 && MouseExceptionScope.focusFollowsMouse.feature == .focusFollowsMouse
@@ -18367,7 +18399,7 @@ struct MetricsTests {
                "property-list numbers and booleans do not cross scalar setting types")
         expect(bridgedSettings?[DefaultsKey.smoothScrollExceptions] == nil
                 && bridgedSettings?[DefaultsKey.switcherAppRules] == nil,
-               "wrong collection element types are dropped on import")
+               "wrong collection element types are dropped by valueLooksRight on import")
         expect(bridgedSettings?[DefaultsKey.smoothScrollStep] as? Int == 60
                 && bridgedSettings?[DefaultsKey.scratchpadBackgroundOpacity] as? Double == 0.5
                 && bridgedSettings?[DefaultsKey.autoQuitExceptions] as? [String]

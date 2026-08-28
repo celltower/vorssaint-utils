@@ -830,6 +830,11 @@ enum Defaults {
         DefaultsKey.superKeySource: SuperKeySource.capsLock.rawValue,
         DefaultsKey.superKeyModifiers: SuperKeySupport.defaultModifierStorageValue,
         DefaultsKey.superKeySoloAction: SuperKeySoloAction.none.rawValue,
+        // Legacy scroll-exception keys stay registered so settings backups from
+        // older builds still carry them through exportKeys()/sanitizedSettings.
+        // Launch migration folds them into mouseScrollingExceptions and clears
+        // the old keys; after that they export as empty arrays.
+        DefaultsKey.smoothScrollExceptions: [String](),
         DefaultsKey.mouseScrollingExceptions: [String](),
         DefaultsKey.scrollInverterExceptions: [String](),
         DefaultsKey.focusFollowsMouseExceptions: [String](),
