@@ -302,8 +302,7 @@ final class ScrollInverter: ObservableObject {
                 .scrollDirection,
                 at: event.location,
                 sourceProcessID: sourceProcessID,
-                targetProcessID: targetProcessID,
-                pointerResolution: .cachedAsynchronous) {
+                targetProcessID: targetProcessID) {
             // Capture both axes before any set: writing a line delta makes the
             // system rederive its point and fixed-point fields.
             let verticalLine = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)

@@ -226,25 +226,16 @@ enum MouseAppExceptionSupport {
         var lookups: [MouseExceptionScope: Set<String>]
         var sourceProcessIDs: [MouseExceptionScope: Set<Int32>]
         var allEmpty: Bool
-        var cachedIdentity: String?
-        var cachedRegion: CGRect?
-        var cachedPoint: CGPoint
-        var cachedAt: TimeInterval
 
         static let empty = LookupSnapshot(lookups: [:],
                                           sourceProcessIDs: [:],
-                                          allEmpty: true,
-                                          cachedIdentity: nil,
-                                          cachedRegion: nil,
-                                          cachedPoint: .zero,
-                                          cachedAt: -1)
+                                          allEmpty: true)
     }
 
-    /// Resolves whether a scope excludes the pointer target using only the
-    /// snapshot and already-known process identifiers — no window server.
-    /// Identities are resolved lazily after the synchronous pid-set checks
-    /// miss. Wheel callers pass no target resolver at all, so their tap path
-    /// never pays AppKit or filesystem work for an event target.
+    /// Resolves whether a scope excludes the event after the cheap pid-set
+    /// checks. A nil target resolver is the production path; the pointer
+    /// closure fills a cache miss synchronously (~190 µs) so every event
+    /// gets a correct verdict.
     static func excludes(scope: MouseExceptionScope,
                          snapshot: LookupSnapshot,
                          sourceProcessID: Int64,

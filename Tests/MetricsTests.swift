@@ -1596,11 +1596,7 @@ struct MetricsTests {
         let exceptionSnapshot = MouseAppExceptionSupport.LookupSnapshot(
             lookups: [.smoothScroll: ["com.example.excepted"]],
             sourceProcessIDs: [.smoothScroll: [55]],
-            allEmpty: false,
-            cachedIdentity: "com.example.front",
-            cachedRegion: nil,
-            cachedPoint: .zero,
-            cachedAt: -1)
+            allEmpty: false)
         var targetIdentityLookups = 0
         var pointerIdentityLookups = 0
         expect(MouseAppExceptionSupport.excludes(
@@ -1645,9 +1641,9 @@ struct MetricsTests {
                     pointerIdentityLookups += 1
                     return "com.example.front"
                 }),
-               "an asynchronous wheel miss skips target identity resolution")
+               "without a target resolver the pointer answer still decides the miss")
         expect(targetIdentityLookups == 1 && pointerIdentityLookups == 2,
-               "the asynchronous wheel path never invokes a target identity resolver")
+               "a nil target resolver never invents AppKit work on the tap path")
         expect(SmoothScrollSupport.isProcessAlive(0) == false,
                "pid 0 is never treated as a live scroll target")
         expect(SmoothScrollSupport.isProcessAlive(getpid()),
@@ -17934,32 +17930,27 @@ struct MetricsTests {
         let mouseExceptionsSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/MouseExceptions/MouseAppExceptions.swift",
             encoding: .utf8)) ?? ""
-        let finishResolutionPrefix = mouseExceptionsSource
-            .components(separatedBy: "private func finishPointerResolution").last?
-            .components(separatedBy: "lock.withLock").first ?? ""
-        expect(finishResolutionPrefix.contains("let resolvedIdentity")
-                && finishResolutionPrefix.contains("NSRunningApplication")
-                && finishResolutionPrefix.contains("NSWorkspace.shared.frontmostApplication"),
-               "pointer resolution completes LaunchServices work before taking the snapshot lock")
-        expect(mouseExceptionsSource.contains(
-                "pointerResolution: PointerResolutionMode = .synchronous")
-                && mouseExceptionsSource.contains(
-                    "case .cachedAsynchronous:\n            targetIdentity = nil"),
-               "clicks resolve synchronously while wheel taps have no target identity resolver")
+        expect(!mouseExceptionsSource.contains("PointerResolutionMode")
+                && !mouseExceptionsSource.contains("cachedAsynchronous")
+                && !mouseExceptionsSource.contains("finishPointerResolution")
+                && !mouseExceptionsSource.contains("pointerResolutionQueue"),
+               "wheel and click features share one synchronous pointer cache fill")
+        expect(mouseExceptionsSource.contains("targetIdentity: nil")
+                && mouseExceptionsSource.contains("private func pointerIdentity(at"),
+               "pid sets stay cheap while a cache miss fills the pointer answer on the caller")
         let smoothScrollSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/SmoothScrollService.swift",
             encoding: .utf8)) ?? ""
         let scrollInverterSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/ScrollInverter.swift",
             encoding: .utf8)) ?? ""
-        expect(smoothScrollSource.contains("pointerResolution: .cachedAsynchronous")
-                && scrollInverterSource.contains("pointerResolution: .cachedAsynchronous"),
-               "only high-frequency wheel taps opt into asynchronous pointer resolution")
+        expect(!smoothScrollSource.contains("pointerResolution:")
+                && !scrollInverterSource.contains("pointerResolution:"),
+               "wheel taps no longer opt into asynchronous pointer resolution")
         let shortcutSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/MouseButtons/MouseButtonShortcutService.swift",
             encoding: .utf8)) ?? ""
-        expect(!shortcutSource.contains("pointerResolution: .cachedAsynchronous")
-                && shortcutSource.contains("excludesActionTarget("),
+        expect(shortcutSource.contains("excludesActionTarget("),
                "side-wheel preflight uses the same synchronous action check as its handler")
 
         for language in AppLanguage.allCases {
