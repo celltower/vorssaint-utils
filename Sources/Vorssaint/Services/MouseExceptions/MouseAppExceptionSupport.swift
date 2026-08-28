@@ -102,24 +102,7 @@ enum MouseAppExceptionSupport {
                 && window.processID != ownProcessID
                 && window.frame.contains(point)
         }
-    }
-
-    /// Resolves the app under the pointer immediately. Click features use this
-    /// path because one missed click cannot be repaired by a cache warmed for
-    /// the next event. The closures keep AppKit / workspace access out of the
-    /// pure geometry test and make the first-click behavior testable.
-    static func pointerIdentity(in windows: [Window],
-                                at point: CGPoint,
-                                ownProcessID: Int32,
-                                identityForProcess: (Int32) -> String?,
-                                frontmostIdentity: () -> String?) -> String? {
-        guard let window = pointerWindow(in: windows,
-                                         at: point,
-                                         ownProcessID: ownProcessID) else {
-            return frontmostIdentity()
         }
-        return identityForProcess(window.processID) ?? frontmostIdentity()
-    }
 
     /// Whether the previous answer still applies. A window answers while the
     /// pointer stays inside it; "no window here" only applies while the
@@ -225,22 +208,17 @@ enum MouseAppExceptionSupport {
     struct LookupSnapshot: Equatable {
         var lookups: [MouseExceptionScope: Set<String>]
         var sourceProcessIDs: [MouseExceptionScope: Set<Int32>]
-        var allEmpty: Bool
 
-        static let empty = LookupSnapshot(lookups: [:],
-                                          sourceProcessIDs: [:],
-                                          allEmpty: true)
+        static let empty = LookupSnapshot(lookups: [:], sourceProcessIDs: [:])
     }
 
     /// Resolves whether a scope excludes the event after the cheap pid-set
-    /// checks. A nil target resolver is the production path; the pointer
-    /// closure fills a cache miss synchronously (~190 µs) so every event
-    /// gets a correct verdict.
+    /// checks. The pointer closure fills a cache miss synchronously (~190 µs)
+    /// so every event gets a correct verdict.
     static func excludes(scope: MouseExceptionScope,
                          snapshot: LookupSnapshot,
                          sourceProcessID: Int64,
                          targetProcessID: Int64,
-                         targetIdentity: (() -> String?)?,
                          pointerIdentity: () -> String?) -> Bool {
         guard let exceptions = snapshot.lookups[scope], !exceptions.isEmpty else {
             return false
@@ -251,10 +229,6 @@ enum MouseAppExceptionSupport {
         }
         if let pid = Self.sourceProcessID(targetProcessID),
            snapshot.sourceProcessIDs[scope]?.contains(pid) == true {
-            return true
-        }
-        if let targetIdentity,
-           isExcepted(targetIdentity(), exceptions: exceptions) {
             return true
         }
         return isExcepted(pointerIdentity(), exceptions: exceptions)

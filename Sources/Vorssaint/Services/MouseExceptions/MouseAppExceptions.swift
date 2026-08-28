@@ -117,7 +117,6 @@ final class MouseAppExceptions: ObservableObject {
             snapshot: snapshot,
             sourceProcessID: sourceProcessID,
             targetProcessID: targetProcessID,
-            targetIdentity: nil,
             pointerIdentity: { self.pointerIdentity(at: point) })
     }
 
@@ -238,8 +237,7 @@ final class MouseAppExceptions: ObservableObject {
         lock.withLock {
             MouseAppExceptionSupport.LookupSnapshot(
                 lookups: lookups,
-                sourceProcessIDs: sourceProcessIDs,
-                allEmpty: allEmpty)
+                sourceProcessIDs: sourceProcessIDs)
         }
     }
 

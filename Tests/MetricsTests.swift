@@ -1595,55 +1595,44 @@ struct MetricsTests {
 
         let exceptionSnapshot = MouseAppExceptionSupport.LookupSnapshot(
             lookups: [.smoothScroll: ["com.example.excepted"]],
-            sourceProcessIDs: [.smoothScroll: [55]],
-            allEmpty: false)
-        var targetIdentityLookups = 0
+            sourceProcessIDs: [.smoothScroll: [55]])
         var pointerIdentityLookups = 0
         expect(MouseAppExceptionSupport.excludes(
                 scope: .smoothScroll,
                 snapshot: exceptionSnapshot,
                 sourceProcessID: 0,
                 targetProcessID: 55,
-                targetIdentity: {
-                    targetIdentityLookups += 1
-                    return "com.example.excepted"
-                },
                 pointerIdentity: {
                     pointerIdentityLookups += 1
                     return "com.example.front"
                 }),
                "the first tick of an excepted target is excluded before the pointer cache warms")
-        expect(targetIdentityLookups == 0 && pointerIdentityLookups == 0,
-               "a pid-set hit resolves neither identity on the tap path")
+        expect(pointerIdentityLookups == 0,
+               "a pid-set hit never asks the pointer answer on the tap path")
         expect(!MouseAppExceptionSupport.excludes(
                 scope: .smoothScroll,
                 snapshot: exceptionSnapshot,
                 sourceProcessID: 0,
                 targetProcessID: 56,
-                targetIdentity: {
-                    targetIdentityLookups += 1
-                    return "com.example.other"
-                },
                 pointerIdentity: {
                     pointerIdentityLookups += 1
                     return "com.example.front"
                 }),
                "a non-excepted target still glides while frontmost differs")
-        expect(targetIdentityLookups == 1 && pointerIdentityLookups == 1,
-               "identities resolve only after both pid-set checks miss")
-        expect(!MouseAppExceptionSupport.excludes(
+        expect(pointerIdentityLookups == 1,
+               "the pointer answer resolves only after both pid-set checks miss")
+        expect(MouseAppExceptionSupport.excludes(
                 scope: .smoothScroll,
                 snapshot: exceptionSnapshot,
                 sourceProcessID: 0,
                 targetProcessID: 56,
-                targetIdentity: nil,
                 pointerIdentity: {
                     pointerIdentityLookups += 1
-                    return "com.example.front"
+                    return "com.example.excepted"
                 }),
-               "without a target resolver the pointer answer still decides the miss")
-        expect(targetIdentityLookups == 1 && pointerIdentityLookups == 2,
-               "a nil target resolver never invents AppKit work on the tap path")
+               "an excepted pointer identity stands the feature down after the pid sets miss")
+        expect(pointerIdentityLookups == 2,
+               "each miss pays the pointer lookup once")
         expect(SmoothScrollSupport.isProcessAlive(0) == false,
                "pid 0 is never treated as a live scroll target")
         expect(SmoothScrollSupport.isProcessAlive(getpid()),
@@ -17884,32 +17873,6 @@ struct MetricsTests {
                 in: [frontWindow], at: CGPoint(x: 380, y: 380), ownProcessID: 9) == nil,
                "a pointer outside every window resolves to nothing")
 
-        var frontmostLookups = 0
-        let firstClickBundleID = MouseAppExceptionSupport.pointerIdentity(
-            in: [frontWindow, behindWindow],
-            at: pointer,
-            ownProcessID: 9,
-            identityForProcess: { processID in
-                processID == frontWindow.processID ? "com.example.excepted" : nil
-            },
-            frontmostIdentity: {
-                frontmostLookups += 1
-                return "com.example.frontmost"
-            })
-        expect(firstClickBundleID == "com.example.excepted" && frontmostLookups == 0,
-               "the first click resolves the non-frontmost app under the pointer synchronously")
-        let desktopClickBundleID = MouseAppExceptionSupport.pointerIdentity(
-            in: [frontWindow],
-            at: CGPoint(x: 380, y: 380),
-            ownProcessID: 9,
-            identityForProcess: { _ in nil },
-            frontmostIdentity: {
-                frontmostLookups += 1
-                return "com.example.frontmost"
-            })
-        expect(desktopClickBundleID == "com.example.frontmost" && frontmostLookups == 1,
-               "a click outside app windows falls back to the frontmost app")
-
         expect(MouseAppExceptionSupport.cacheHolds(region: frontWindow.frame, resolvedPoint: pointer,
                                                    resolvedAt: 10, point: CGPoint(x: 120, y: 120), now: 10.2),
                "a fresh answer keeps serving while the pointer stays inside its window")
@@ -17930,14 +17893,21 @@ struct MetricsTests {
         let mouseExceptionsSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/MouseExceptions/MouseAppExceptions.swift",
             encoding: .utf8)) ?? ""
+        let supportSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/MouseExceptions/MouseAppExceptionSupport.swift",
+            encoding: .utf8)) ?? ""
         expect(!mouseExceptionsSource.contains("PointerResolutionMode")
                 && !mouseExceptionsSource.contains("cachedAsynchronous")
                 && !mouseExceptionsSource.contains("finishPointerResolution")
-                && !mouseExceptionsSource.contains("pointerResolutionQueue"),
+                && !mouseExceptionsSource.contains("pointerResolutionQueue")
+                && !mouseExceptionsSource.contains("targetIdentity"),
                "wheel and click features share one synchronous pointer cache fill")
-        expect(mouseExceptionsSource.contains("targetIdentity: nil")
-                && mouseExceptionsSource.contains("private func pointerIdentity(at"),
-               "pid sets stay cheap while a cache miss fills the pointer answer on the caller")
+        expect(mouseExceptionsSource.contains("private func pointerIdentity(at")
+                && !supportSource.contains("static func pointerIdentity(in windows"),
+               "the pointer answer lives in one place and matches the production cache path")
+        expect(!supportSource.contains("var allEmpty")
+                && !supportSource.contains("targetIdentity:"),
+               "the lookup snapshot no longer carries unused empty/target fields")
         let smoothScrollSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/SmoothScrollService.swift",
             encoding: .utf8)) ?? ""
