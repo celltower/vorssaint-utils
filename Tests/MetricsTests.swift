@@ -17593,19 +17593,40 @@ struct MetricsTests {
             let suiteName = "com.vorssaint.tests.mouse-scroll-exceptions.\(UUID().uuidString)"
             let suite = UserDefaults(suiteName: suiteName)!
             defer { suite.removePersistentDomain(forName: suiteName) }
-            suite.set(["com.example.shared"], forKey: DefaultsKey.mouseScrollingExceptions)
+            // Shared key never written: upgrade path unions the legacy lists.
             suite.set(["com.example.smooth"], forKey: DefaultsKey.smoothScrollExceptions)
             suite.set(["com.example.direction", "com.example.shared"],
                       forKey: DefaultsKey.scrollInverterExceptions)
             Defaults.migrateMouseScrollingExceptions(in: suite)
             expect(suite.stringArray(forKey: DefaultsKey.mouseScrollingExceptions)
-                    == ["com.example.shared", "com.example.smooth", "com.example.direction"],
-                   "legacy scrolling exception lists merge into one ordered list")
+                    == ["com.example.smooth", "com.example.direction", "com.example.shared"],
+                   "legacy scrolling exception lists merge into one ordered list on first upgrade")
             expect(suite.stringArray(forKey: DefaultsKey.smoothScrollExceptions)
-                    == ["com.example.shared", "com.example.smooth", "com.example.direction"]
+                    == ["com.example.smooth", "com.example.direction", "com.example.shared"]
                     && suite.stringArray(forKey: DefaultsKey.scrollInverterExceptions)
-                        == ["com.example.shared", "com.example.smooth", "com.example.direction"],
+                        == ["com.example.smooth", "com.example.direction", "com.example.shared"],
                    "legacy scrolling lists mirror the shared list for downgrade restores")
+        }
+        do {
+            // Once the shared key exists it wins — otherwise remove writes the
+            // shorter list, reload merges the still-full legacy pair, and the
+            // row comes straight back.
+            let suiteName = "com.vorssaint.tests.mouse-scroll-removal.\(UUID().uuidString)"
+            let suite = UserDefaults(suiteName: suiteName)!
+            defer { suite.removePersistentDomain(forName: suiteName) }
+            suite.set(["com.example.keep"], forKey: DefaultsKey.mouseScrollingExceptions)
+            suite.set(["com.example.keep", "com.example.gone"],
+                      forKey: DefaultsKey.smoothScrollExceptions)
+            suite.set(["com.example.keep", "com.example.gone"],
+                      forKey: DefaultsKey.scrollInverterExceptions)
+            Defaults.migrateMouseScrollingExceptions(in: suite)
+            expect(suite.stringArray(forKey: DefaultsKey.mouseScrollingExceptions)
+                    == ["com.example.keep"]
+                    && suite.stringArray(forKey: DefaultsKey.smoothScrollExceptions)
+                        == ["com.example.keep"]
+                    && suite.stringArray(forKey: DefaultsKey.scrollInverterExceptions)
+                        == ["com.example.keep"],
+                   "a removal from the shared list survives the legacy mirror")
         }
         do {
             // A backup written by a current release still carries the split

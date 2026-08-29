@@ -832,8 +832,9 @@ enum Defaults {
         DefaultsKey.superKeySoloAction: SuperKeySoloAction.none.rawValue,
         // Legacy scroll-exception keys stay registered so settings backups from
         // older builds still carry them through exportKeys()/sanitizedSettings.
-        // Launch migration folds them into mouseScrollingExceptions and mirrors
-        // the shared list back, so a downgrade restore still sees the lists.
+        // Launch migration folds them into mouseScrollingExceptions only when
+        // that key was never written, then mirrors the shared list back so a
+        // downgrade restore still sees the lists.
         DefaultsKey.smoothScrollExceptions: [String](),
         DefaultsKey.mouseScrollingExceptions: [String](),
         DefaultsKey.scrollInverterExceptions: [String](),
@@ -1370,18 +1371,24 @@ enum Defaults {
     }
 
     /// Smooth scrolling and reverse scrolling used to keep separate exception
-    /// lists (#358). They now share one key. This folds both legacy lists (and
-    /// any already-shared entries) into `mouseScrollingExceptions` and mirrors
-    /// that shared list back onto the old keys so a settings backup from this
-    /// build still restores both lists on a pre-upgrade release. That can
-    /// broaden an existing exception: an app that was only on the smooth-scroll
-    /// list also stands down reverse scrolling after upgrade, and the reverse
-    /// — the split is not recoverable.
+    /// lists (#358). They now share one key. When `mouseScrollingExceptions`
+    /// has never been written, this folds both legacy lists into that key
+    /// (upgrade and old-backup restore). Once the shared key exists it is the
+    /// only answer — legacy lists are not merged back in, or a removal would
+    /// come back on the next `reload()`. The shared list is then mirrored onto
+    /// the old keys so a settings backup from this build still restores both
+    /// lists on a pre-upgrade release. That can broaden an existing exception
+    /// on first upgrade: an app that was only on the smooth-scroll list also
+    /// stands down reverse scrolling after upgrade, and the reverse — the
+    /// split is not recoverable.
     static func migrateMouseScrollingExceptions(in defaults: UserDefaults) {
-        let current = defaults.stringArray(forKey: DefaultsKey.mouseScrollingExceptions) ?? []
         let smooth = defaults.stringArray(forKey: DefaultsKey.smoothScrollExceptions) ?? []
         let direction = defaults.stringArray(forKey: DefaultsKey.scrollInverterExceptions) ?? []
-        let merged = sanitizedBundleIdentifierList(current + smooth + direction)
+        // Launch migration runs before `register(defaults:)`, so `stored` is
+        // nil only when the key was never written. From `reload()` it is
+        // always non-nil, including after the last entry was removed.
+        let stored = defaults.object(forKey: DefaultsKey.mouseScrollingExceptions) as? [String]
+        let merged = sanitizedBundleIdentifierList(stored ?? (smooth + direction))
 
         if !merged.isEmpty
             || defaults.object(forKey: DefaultsKey.mouseScrollingExceptions) != nil {
