@@ -17660,6 +17660,27 @@ struct MetricsTests {
                         == ["com.example.smooth", "com.example.direction"],
                    "restored legacy scrolling lists merge into the shared key and stay mirrored")
         }
+        do {
+            // Restore order: write the file, migrate while the shared key is
+            // still absent, then re-add carried paths. Doing the path write
+            // first would plant mouseScrollingExceptions with only the path
+            // and drop the file's legacy bundle ids on the next migrate.
+            let suiteName = "com.vorssaint.tests.mouse-scroll-restore-order.\(UUID().uuidString)"
+            let suite = UserDefaults(suiteName: suiteName)!
+            defer { suite.removePersistentDomain(forName: suiteName) }
+            let localPath = "/Users/josh/Library/Application Support/PrismLauncher"
+                + "/java/jre-legacy/zulu-8.jre/Contents/Home/bin/java"
+            suite.set(["com.example.smooth"], forKey: DefaultsKey.smoothScrollExceptions)
+            suite.set(["com.example.direction"], forKey: DefaultsKey.scrollInverterExceptions)
+            Defaults.migrateMouseScrollingExceptions(in: suite)
+            suite.set(SettingsBackupSupport.restoredExceptionList(
+                restored: suite.stringArray(forKey: DefaultsKey.mouseScrollingExceptions) ?? [],
+                carried: [localPath]),
+                      forKey: DefaultsKey.mouseScrollingExceptions)
+            expect(suite.stringArray(forKey: DefaultsKey.mouseScrollingExceptions)
+                    == ["com.example.smooth", "com.example.direction", localPath],
+                   "an older backup's scroll exceptions survive beside a carried path identity")
+        }
         expect(MouseExceptionScope.smoothScroll.feature == .smoothScroll
                 && MouseExceptionScope.scrollDirection.feature == .scrollInverter
                 && MouseExceptionScope.focusFollowsMouse.feature == .focusFollowsMouse
@@ -18324,8 +18345,9 @@ struct MetricsTests {
                     == ["com.apple.Safari", localJavaPath],
                "applying the same backup twice does not double a carried path")
         // SettingsBackup.swift is not in the test binary, and the fix is an
-        // ORDER: capture before the clear, put back after the write. Either
-        // one moved leaves the code present and the entries still deleted.
+        // ORDER: capture before the clear, migrate after the write, put back
+        // after migrate. Either one moved leaves the code present and either
+        // drops machine-local paths or drops an older backup's legacy lists.
         // Strip comments before asserting: "X appears before Y" would otherwise
         // be satisfied by a doc comment mentioning either.
         let backupServiceLines = ((try? String(
@@ -18337,16 +18359,19 @@ struct MetricsTests {
         let clearAt = backupServiceLines.firstIndex {
             isCodeLine($0) && $0.contains("defaults.removeObject(forKey: key)")
         }
-        let putBackAt = backupServiceLines.firstIndex {
-            isCodeLine($0) && $0.contains("SettingsBackupSupport.restoredExceptionList(")
-        }
         let writeAt = backupServiceLines.firstIndex {
             isCodeLine($0) && $0.contains("defaults.set(value, forKey: key)")
         }
-        expect([captureAt, clearAt, putBackAt, writeAt].allSatisfy { $0 != nil }
-                && captureAt! < clearAt! && writeAt! < putBackAt!,
-               "a settings restore reads the machine-local entries before clearing "
-                   + "and writes them back after the file's values")
+        let migrateAt = backupServiceLines.firstIndex {
+            isCodeLine($0) && $0.contains("Defaults.migrateMouseScrollingExceptions(in: defaults)")
+        }
+        let putBackAt = backupServiceLines.firstIndex {
+            isCodeLine($0) && $0.contains("SettingsBackupSupport.restoredExceptionList(")
+        }
+        expect([captureAt, clearAt, writeAt, migrateAt, putBackAt].allSatisfy { $0 != nil }
+                && captureAt! < clearAt! && writeAt! < migrateAt! && migrateAt! < putBackAt!,
+               "a settings restore migrates legacy scroll lists after writing the "
+                   + "file and before putting machine-local paths back")
         expect(SettingsBackupSupport.sanitizedSettings(from: [SettingsBackupSupport.settingsKey: [String: Any]()]) == nil,
                "a file without the version envelope is rejected")
         let tampered: [String: Any] = [
