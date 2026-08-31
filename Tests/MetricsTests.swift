@@ -21290,32 +21290,31 @@ struct MetricsTests {
         let smoothSchedulerCode = smoothSchedulerSource.components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
-        expect(smoothSchedulerCode.contains("screen.displayLink(")
-                && smoothSchedulerCode.contains("displayLink.add(to: .main, forMode: .common)")
-                && smoothSchedulerCode.contains("sender.timestamp")
-                && smoothSchedulerCode.contains("sender.duration"),
-               "smooth scrolling follows the active display's native cadence and elapsed frame time")
-        expect(smoothSchedulerCode.contains("displayLink?.invalidate()")
-                && smoothSchedulerCode.contains("frameTimer?.invalidate()")
-                && smoothSchedulerCode.contains("removeScreenObserver()")
-                && smoothSchedulerCode.contains("removeSleepObserver()"),
-               "smooth scrolling releases either scheduler and its lifecycle observers on stop")
-        expect(smoothSchedulerCode.contains("NSScreen.withMouse")
-                && smoothSchedulerCode.contains("didChangeScreenParametersNotification")
+        // Mos-like path: CoreVideo DisplayLink on the scroll thread, with a
+        // 60 Hz timer fallback when no display link can be created. Main's
+        // CADisplayLink/NSScreen cadence was replaced by this model in #1040.
+        expect(smoothSchedulerCode.contains("CVDisplayLinkCreateWithActiveCGDisplays")
+                && smoothSchedulerCode.contains("CVDisplayLinkStart")
+                && smoothSchedulerCode.contains("displayLinkControlQueue")
                 && smoothSchedulerCode.contains("Timer(timeInterval: SmoothScrollSupport.frameInterval"),
+               "smooth scrolling follows the active display's native cadence and elapsed frame time")
+        expect(smoothSchedulerCode.contains("stopDisplayLink(")
+                && smoothSchedulerCode.contains("frameTimer?.invalidate()")
+                && smoothSchedulerCode.contains("CVDisplayLinkStop"),
+               "smooth scrolling releases either scheduler and its lifecycle observers on stop")
+        expect(smoothSchedulerCode.contains("startDisplayLink(generation:")
+                && smoothSchedulerCode.contains("frameTimer = timer"),
                "smooth scrolling follows display changes and keeps a no-screen timer fallback")
         let smoothTapDisabled = smoothSchedulerCode.components(separatedBy: "tapDisabledByTimeout")
             .dropFirst().first?.components(separatedBy: "return").first ?? ""
-        expect(smoothTapDisabled.contains("tapDisabledByUserInput")
-                && smoothTapDisabled.contains("stopGlide()")
-                && smoothTapDisabled.contains("AppFeature.smoothScroll.isAvailable")
-                && smoothTapDisabled.contains("DefaultsKey.smoothScrollEnabled")
-                && smoothTapDisabled.contains("AXIsProcessTrusted()")
-                && smoothTapDisabled.contains("SessionActivity.shared.isActive"),
+        expect(smoothTapDisabled.contains("SessionActivity.shared.isActive")
+                && smoothSchedulerCode.contains("handleTapDisabled(")
+                && smoothSchedulerCode.contains("stopGlideLocked()")
+                && smoothSchedulerCode.contains("AXIsProcessTrusted()")
+                && smoothSchedulerCode.contains("SessionActivitySupport.tapShouldRun"),
                "a disabled smooth-scroll tap drops its tail and re-arms only while fully wanted")
-        let smoothSleep = smoothSchedulerCode.components(separatedBy: "willSleepNotification")
-            .dropFirst().first?.components(separatedBy: "private func removeSleepObserver").first ?? ""
-        expect(smoothSleep.contains("stopGlide()"),
+        expect(smoothSchedulerCode.contains("willSleepNotification")
+                && smoothSchedulerCode.contains("dropGlideForSleep()"),
                "smooth scrolling cannot carry a pre-sleep glide into the next wake")
         let cleaningModeSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/CleaningMode/CleaningModeManager.swift",

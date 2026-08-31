@@ -56,6 +56,7 @@ final class SmoothScrollService: ObservableObject {
     /// saturated main/scroll path cannot fight the system forever.
     private var tapTimeoutCount = 0
     private var tapTimeoutWindowStart: TimeInterval = 0
+    private var sleepObserver: NSObjectProtocol?
     private static let ownProcessID = Int64(getpid())
     private static let maxTapTimeoutsPerWindow = 3
     private static let tapTimeoutWindow: TimeInterval = 60
@@ -66,6 +67,7 @@ final class SmoothScrollService: ObservableObject {
         SessionActivity.shared.onChange { [weak self] _ in
             self?.syncWithPreferences()
         }
+        installSleepObserver()
     }
 
     /// Applies the persisted preference; safe to call repeatedly.
@@ -451,6 +453,33 @@ final class SmoothScrollService: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.stop()
         }
+    }
+
+    /// A coast in flight across sleep would resume into a different display
+    /// timing and often a different frontmost app; drop the tail on the way
+    /// down (same reliability fix main landed for the pre-Mos scheduler).
+    private func installSleepObserver() {
+        guard sleepObserver == nil else { return }
+        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.dropGlideForSleep()
+        }
+    }
+
+    private func dropGlideForSleep() {
+        let runLoop = lifecycleLock.withLock { tapRunLoop }
+        guard let runLoop else {
+            stopGlideLocked()
+            return
+        }
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { [weak self] in
+            self?.stopGlideLocked()
+            self?.tearDownGlideDriverOnScrollThread()
+        }
+        CFRunLoopWakeUp(runLoop)
     }
 
     private func handleTapDisabled(_ event: CGEvent) -> Unmanaged<CGEvent>? {
