@@ -1444,9 +1444,12 @@ struct MetricsTests {
                "scroll acceleration follows settings backups")
         expect((Defaults.registeredDefaults[DefaultsKey.smoothScrollExceptions] as? [String])?.isEmpty == true
                 && (Defaults.registeredDefaults[DefaultsKey.scrollInverterExceptions] as? [String])?.isEmpty == true
+                && Defaults.registeredDefaults[DefaultsKey.mouseScrollingExceptions] == nil
+                && SettingsBackupSupport.unregisteredPreferenceKeys.contains(DefaultsKey.mouseScrollingExceptions)
                 && SettingsBackupSupport.exportKeys().contains(DefaultsKey.smoothScrollExceptions)
-                && SettingsBackupSupport.exportKeys().contains(DefaultsKey.scrollInverterExceptions),
-               "legacy scrolling exception keys stay in backups so older restore files keep their lists")
+                && SettingsBackupSupport.exportKeys().contains(DefaultsKey.scrollInverterExceptions)
+                && SettingsBackupSupport.exportKeys().contains(DefaultsKey.mouseScrollingExceptions),
+               "legacy scrolling lists stay registered, the shared key stays unregistered, and all three travel in backups")
         expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollVertical] as? Bool == true,
                "vertical smoothing is selected when the feature is enabled")
         expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollHorizontal] as? Bool == true,
@@ -17576,10 +17579,15 @@ struct MetricsTests {
 
         // MARK: Mouse app exceptions (issue #358)
 
-        expect(MouseExceptionScope.allCases.allSatisfy {
+        expect(MouseExceptionScope.allCases
+                .filter { $0.defaultsKey != DefaultsKey.mouseScrollingExceptions }
+                .allSatisfy {
                     (Defaults.registeredDefaults[$0.defaultsKey] as? [String])?.isEmpty == true
-               },
-               "every feature's exception list registers empty, so they all start out working everywhere")
+                }
+                && Defaults.registeredDefaults[DefaultsKey.mouseScrollingExceptions] == nil
+                && SettingsBackupSupport.unregisteredPreferenceKeys
+                    .contains(DefaultsKey.mouseScrollingExceptions),
+               "non-scroll exception lists register empty; the shared scroll list stays unregistered so absence means never written")
         expect(MouseExceptionScope.smoothScroll.defaultsKey
                 == MouseExceptionScope.scrollDirection.defaultsKey
                 && MouseExceptionScope.smoothScroll.defaultsKey
@@ -17680,6 +17688,27 @@ struct MetricsTests {
             expect(suite.stringArray(forKey: DefaultsKey.mouseScrollingExceptions)
                     == ["com.example.smooth", "com.example.direction", localPath],
                    "an older backup's scroll exceptions survive beside a carried path identity")
+        }
+        do {
+            // Registered [] would make a post-clear read look written and skip
+            // the legacy union. The shared key must stay unregistered so nil
+            // still means never written inside applyAndRelaunch.
+            let suiteName = "com.vorssaint.tests.mouse-scroll-clear-sentinel.\(UUID().uuidString)"
+            let suite = UserDefaults(suiteName: suiteName)!
+            defer { suite.removePersistentDomain(forName: suiteName) }
+            suite.register(defaults: [
+                DefaultsKey.smoothScrollExceptions: [String](),
+                DefaultsKey.scrollInverterExceptions: [String](),
+            ])
+            suite.set(["com.example.smooth"], forKey: DefaultsKey.smoothScrollExceptions)
+            suite.set(["com.example.direction"], forKey: DefaultsKey.scrollInverterExceptions)
+            suite.removeObject(forKey: DefaultsKey.mouseScrollingExceptions)
+            expect(suite.object(forKey: DefaultsKey.mouseScrollingExceptions) == nil,
+                   "clearing the unregistered shared key leaves nil, not a registered empty list")
+            Defaults.migrateMouseScrollingExceptions(in: suite)
+            expect(suite.stringArray(forKey: DefaultsKey.mouseScrollingExceptions)
+                    == ["com.example.smooth", "com.example.direction"],
+                   "restore migration still folds legacy lists when the shared key was never written")
         }
         expect(MouseExceptionScope.smoothScroll.feature == .smoothScroll
                 && MouseExceptionScope.scrollDirection.feature == .scrollInverter

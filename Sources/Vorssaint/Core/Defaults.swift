@@ -832,11 +832,14 @@ enum Defaults {
         DefaultsKey.superKeySoloAction: SuperKeySoloAction.none.rawValue,
         // Legacy scroll-exception keys stay registered so settings backups from
         // older builds still carry them through exportKeys()/sanitizedSettings.
-        // Launch migration folds them into mouseScrollingExceptions only when
+        // The shared key is deliberately unregistered (see
+        // SettingsBackupSupport.unregisteredPreferenceKeys): a registered []
+        // would make "never written" indistinguishable from an empty list after
+        // clear, and restore migration would skip folding the legacy lists.
+        // Launch migration folds legacy into mouseScrollingExceptions only when
         // that key was never written, then mirrors the shared list back so a
         // downgrade restore still sees the lists.
         DefaultsKey.smoothScrollExceptions: [String](),
-        DefaultsKey.mouseScrollingExceptions: [String](),
         DefaultsKey.scrollInverterExceptions: [String](),
         DefaultsKey.focusFollowsMouseExceptions: [String](),
         DefaultsKey.mouseNavigationExceptions: [String](),
@@ -1384,9 +1387,10 @@ enum Defaults {
     static func migrateMouseScrollingExceptions(in defaults: UserDefaults) {
         let smooth = defaults.stringArray(forKey: DefaultsKey.smoothScrollExceptions) ?? []
         let direction = defaults.stringArray(forKey: DefaultsKey.scrollInverterExceptions) ?? []
-        // Launch migration runs before `register(defaults:)`, so `stored` is
-        // nil only when the key was never written. From `reload()` it is
-        // always non-nil, including after the last entry was removed.
+        // Launch migration / restore migration: `stored` is nil only when the
+        // key was never written. The shared key stays out of registeredDefaults
+        // so a post-clear read is not the registered `[]`. From `reload()` after
+        // an add/remove it is always non-nil, including when the list is empty.
         let stored = defaults.object(forKey: DefaultsKey.mouseScrollingExceptions) as? [String]
         let merged = sanitizedBundleIdentifierList(stored ?? (smooth + direction))
 
