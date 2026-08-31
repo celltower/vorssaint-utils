@@ -6621,6 +6621,21 @@ struct MetricsTests {
                "a regular app within the depth cap is still found")
         expect(owningApp(of: 0) == nil,
                "a missing responsible pid maps to no app")
+        func resolvedOwningApp(responsible: pid_t, pid: pid_t, regularApps: Set<pid_t> = [100]) -> pid_t? {
+            let isRegular: (pid_t) -> Bool = { regularApps.contains($0) }
+            let parent: (pid_t) -> pid_t = { helperParents[$0] ?? 0 }
+            return MixerRoutingSupport.owningRegularAppPid(
+                responsiblePid: responsible,
+                isRegularApp: isRegular,
+                parentPid: parent
+            ) ?? (responsible != pid ? MixerRoutingSupport.owningRegularAppPid(
+                responsiblePid: pid,
+                isRegularApp: isRegular,
+                parentPid: parent
+            ) : nil)
+        }
+        expect(resolvedOwningApp(responsible: 700, pid: 500) == 100,
+               "a helper whose responsibility returns a daemon still falls back to its parent app")
         expect(!MixerRoutingSupport.requiresEngine(volume: 1,
                                                    selectedOutputDeviceUID: nil,
                                                    targetOutputDeviceUID: "BuiltInSpeakerDevice",
@@ -8032,6 +8047,13 @@ struct MetricsTests {
                    && !ClipboardHistoryBatch.listOwnsSelectAllShortcut(batchCount: 0, queryIsEmpty: false)
                    && ClipboardHistoryBatch.listOwnsSelectAllShortcut(batchCount: 1, queryIsEmpty: false),
                "the list claims command-A over a selection or an empty search field")
+        expect(ClipboardHistoryBatch.listOwnsDeleteShortcut(batchCount: 2)
+                   && !ClipboardHistoryBatch.listOwnsDeleteShortcut(batchCount: 0),
+               "the list only claims command-delete over an explicit selection")
+        expect(String(format: FeatureStrings.clipboard(.enUS).deleteSelectedFormat, 3) == "Delete 3",
+               "English bulk delete string formats count correctly")
+        expect(String(format: FeatureStrings.clipboard(.ptBR).deleteSelectedFormat, 3) == "Apagar 3",
+               "Portuguese bulk delete string formats count correctly")
 
         // MARK: Shelf tile tooltip
 
@@ -12446,13 +12468,13 @@ struct MetricsTests {
 
         // MARK: Features hub catalog
 
-        expect(AppFeature.allCases.count == 56, "feature catalog has 56 features")
+        expect(AppFeature.allCases.count == 57, "feature catalog has 57 features")
         expect(Set(AppFeature.allCases.map(\.rawValue)).count == AppFeature.allCases.count,
                "feature ids are unique")
         expect(AppFeature.allCases.map(\.rawValue) == [
             "switcher", "dockPreview", "dockClick", "windowMaximizer", "windowLayout", "autoQuit",
             "scrollInverter", "focusFollowsMouse", "smoothScroll", "mouseAcceleration", "mouseNavigation", "mouseButtonShortcuts", "middleClick",
-            "mouseClickDebounce", "keyboardDebounce", "textSnippets", "superKey",
+            "mouseClickDebounce", "keyboardDebounce", "textSnippets", "superKey", "quitWindowProtection",
             "clipboardHistory", "pastePlain", "finderCutPaste", "finderRename", "shelf", "urlCleaner",
             "diskImageInstaller",
             "mixer", "soundOutputSwitcher", "micMute", "musicBlock",
@@ -13263,7 +13285,7 @@ struct MetricsTests {
         for language in AppLanguage.allCases {
             let values = Mirror(reflecting: FeatureStrings.clipboard(language)).children
                 .compactMap { $0.value as? String }
-            expect(values.count == 53 && values.allSatisfy { !$0.isEmpty },
+            expect(values.count == 54 && values.allSatisfy { !$0.isEmpty },
                    "every clipboard string is set for \(language.rawValue)")
             expect(values.allSatisfy { !$0.contains("—") },
                    "no em-dash in visible clipboard strings (\(language.rawValue))")
@@ -21588,6 +21610,110 @@ struct MetricsTests {
                "a detached command runs its payload once whatever the payload exits with "
                + "(ran \(detachedRuns) time(s))")
         try? FileManager.default.removeItem(at: detachRoot)
+
+        // MARK: Command-Q / Command-W protection
+        expect(QuitProtectionSupport.sanitizedHoldDuration(100) == 250,
+               "quit protection clamps a too-short hold duration")
+        expect(QuitProtectionSupport.sanitizedHoldDuration(3_000) == 2_000,
+               "quit protection clamps an overly long hold duration")
+        expect(QuitProtectionSupport.sanitizedDoublePressInterval(100) == 200,
+               "quit protection clamps a too-short double-press interval")
+        expect(QuitProtectionSupport.sanitizedDoublePressInterval(3_000) == 1_500,
+               "quit protection clamps an overly long double-press interval")
+        expect(QuitProtectionSupport.isWithinDoublePressInterval(
+            firstTimestamp: 1_000_000_000,
+            secondTimestamp: 2_500_000_000,
+            intervalMilliseconds: 1_500
+        ), "a second press on the interval edge confirms")
+        expect(!QuitProtectionSupport.isWithinDoublePressInterval(
+            firstTimestamp: 1_000_000_000,
+            secondTimestamp: 2_500_000_001,
+            intervalMilliseconds: 1_500
+        ), "a second press after the interval starts a new confirmation")
+        expect(QuitProtectionSupport.usesNativeQuitRequest(for: .quit)
+                && !QuitProtectionSupport.usesNativeQuitRequest(for: .close),
+               "quit confirmation asks the target app to terminate while close stays a window shortcut")
+
+        expect(QuitProtectionSupport.scopeAllows(.all, bundleIdentifier: nil, exceptions: []),
+               "all-app scope protects even an app without a bundle identifier")
+        expect(QuitProtectionSupport.scopeAllows(.selectedOnly,
+                                                 bundleIdentifier: "com.example.editor",
+                                                 exceptions: ["com.example.editor"]),
+               "selected-only scope protects a selected bundle")
+        expect(!QuitProtectionSupport.scopeAllows(.selectedOnly,
+                                                  bundleIdentifier: "com.example.other",
+                                                  exceptions: ["com.example.editor"]),
+               "selected-only scope leaves an unselected bundle alone")
+        expect(!QuitProtectionSupport.scopeAllows(.allExceptSelected,
+                                                  bundleIdentifier: "com.example.editor",
+                                                  exceptions: ["com.example.editor"]),
+               "all-except scope leaves a selected bundle alone")
+        expect(QuitProtectionSupport.scopeAllows(.allExceptSelected,
+                                                 bundleIdentifier: "com.example.other",
+                                                 exceptions: ["com.example.editor"]),
+               "all-except scope protects an unselected bundle")
+
+        expect(QuitProtectionSupport.matchesKey(keyCharacter: "q", keyCode: 0,
+                                                shortcut: .quit),
+               "quit protection prefers the layout-resolved q character")
+        expect(QuitProtectionSupport.matchesKey(keyCharacter: nil, keyCode: 13,
+                                                shortcut: .close),
+               "quit protection falls back to the W key code without a character")
+        expect(QuitProtectionSupport.isBaseShortcut(keyCharacter: "q", keyCode: 12,
+                                                    command: true, control: false,
+                                                    option: false, shift: false, shortcut: .quit),
+               "plain Command-Q is recognized")
+        expect(!QuitProtectionSupport.isBaseShortcut(keyCharacter: "q", keyCode: 12,
+                                                     command: true, control: false,
+                                                     option: false, shift: true, shortcut: .quit),
+               "Shift-Command-Q is not mistaken for plain Command-Q")
+        expect(QuitProtectionSupport.isExtraShortcut(keyCharacter: "q", keyCode: 12,
+                                                     command: true, control: false,
+                                                     option: false, shift: true,
+                                                     shortcut: .quit, extraModifier: .shift),
+               "Shift-Command-Q is recognized as an extra-modifier confirmation")
+        expect(QuitProtectionSupport.isExtraShortcut(keyCharacter: "w", keyCode: 13,
+                                                     command: true, control: true,
+                                                     option: false, shift: false,
+                                                     shortcut: .close, extraModifier: .control),
+               "Control-Command-W is recognized as an extra-modifier confirmation")
+        expect(!QuitProtectionSupport.isExtraShortcut(keyCharacter: "q", keyCode: 12,
+                                                      command: true, control: false,
+                                                      option: true, shift: false,
+                                                      shortcut: .quit, extraModifier: .shift),
+               "an unrelated modifier combination is not protected")
+
+        let quitProtectionKeys = [
+            DefaultsKey.quitProtectionQuitEnabled,
+            DefaultsKey.quitProtectionQuitMode,
+            DefaultsKey.quitProtectionQuitHoldDurationMs,
+            DefaultsKey.quitProtectionQuitDoubleIntervalMs,
+            DefaultsKey.quitProtectionQuitExtraModifier,
+            DefaultsKey.quitProtectionQuitScope,
+            DefaultsKey.quitProtectionQuitExceptions,
+            DefaultsKey.quitProtectionQuitShowFeedback,
+            DefaultsKey.quitProtectionCloseEnabled,
+            DefaultsKey.quitProtectionCloseMode,
+            DefaultsKey.quitProtectionCloseHoldDurationMs,
+            DefaultsKey.quitProtectionCloseDoubleIntervalMs,
+            DefaultsKey.quitProtectionCloseExtraModifier,
+            DefaultsKey.quitProtectionCloseScope,
+            DefaultsKey.quitProtectionCloseExceptions,
+            DefaultsKey.quitProtectionCloseShowFeedback,
+        ]
+        expect(quitProtectionKeys.allSatisfy { Defaults.registeredDefaults[$0] != nil },
+               "quit and close protection settings have registered defaults")
+        expect(SettingsBackupSupport.exportKeys().isSuperset(of: Set<String>(quitProtectionKeys)),
+               "quit and close protection settings are included in portable backup")
+
+        for language in AppLanguage.allCases {
+            let quitProtectionValues = Mirror(reflecting: FeatureStrings.quitProtection(language)).children
+                .compactMap { $0.value as? String }
+            expect(quitProtectionValues.count == 26 && quitProtectionValues.allSatisfy { !$0.isEmpty },
+                   "every quit protection string is set for \(language.rawValue)")
+            expect(quitProtectionValues.allSatisfy { !$0.contains("—") },
+                   "no em-dash in quit protection strings (\(language.rawValue))")
+        }
 
         if failures.isEmpty {
             print("TESTS OK (\(checks) checks)")

@@ -160,6 +160,11 @@ enum SettingsDirectory {
                                                  FeatureStrings.windowLayout(language).gestureResize]),
                 SettingsDirectoryItem(page: .autoQuit, title: s.autoQuitName, icon: "xmark.rectangle",
                                       keywords: [s.autoQuitEnable]),
+                SettingsDirectoryItem(page: .quitProtection,
+                                      title: FeatureStrings.quitProtection(language).name,
+                                      icon: "shield.lefthalf.filled",
+                                      keywords: [FeatureStrings.quitProtection(language).description,
+                                                 "⌘Q", "⌘W", "hold", "double press", "modifier"]),
             ]),
             (categories.files, [
                 SettingsDirectoryItem(page: .clipboard, title: FeatureStrings.clipboard(language).title,

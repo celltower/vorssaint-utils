@@ -119,6 +119,23 @@ enum DefaultsKey {
     static let finderPasteImageAsFile = "finderPasteImageAsFile"
     static let autoQuitEnabled = "autoQuitEnabled"
     static let autoQuitExceptions = "autoQuitExceptions"  // [bundle id] kept running
+    // Quit/close protection: each shortcut owns its full configuration and app list.
+    static let quitProtectionQuitEnabled = "quitProtectionQuitEnabled"
+    static let quitProtectionQuitMode = "quitProtectionQuitMode"
+    static let quitProtectionQuitHoldDurationMs = "quitProtectionQuitHoldDurationMs"
+    static let quitProtectionQuitDoubleIntervalMs = "quitProtectionQuitDoubleIntervalMs"
+    static let quitProtectionQuitExtraModifier = "quitProtectionQuitExtraModifier"
+    static let quitProtectionQuitScope = "quitProtectionQuitScope"
+    static let quitProtectionQuitExceptions = "quitProtectionQuitExceptions"
+    static let quitProtectionQuitShowFeedback = "quitProtectionQuitShowFeedback"
+    static let quitProtectionCloseEnabled = "quitProtectionCloseEnabled"
+    static let quitProtectionCloseMode = "quitProtectionCloseMode"
+    static let quitProtectionCloseHoldDurationMs = "quitProtectionCloseHoldDurationMs"
+    static let quitProtectionCloseDoubleIntervalMs = "quitProtectionCloseDoubleIntervalMs"
+    static let quitProtectionCloseExtraModifier = "quitProtectionCloseExtraModifier"
+    static let quitProtectionCloseScope = "quitProtectionCloseScope"
+    static let quitProtectionCloseExceptions = "quitProtectionCloseExceptions"
+    static let quitProtectionCloseShowFeedback = "quitProtectionCloseShowFeedback"
     static let shelfEnabled = "shelfEnabled"
     static let shelfShortcutEnabled = "shelfShortcutEnabled"
     static let shelfShortcut = "shelfShortcut"            // GlobalShortcut storage value
@@ -887,6 +904,22 @@ enum Defaults {
         // Finder never benefits from being "quit" (it just relaunches), so
         // it's excepted out of the box.
         DefaultsKey.autoQuitExceptions: mandatoryAutoQuitExceptionBundleIDs,
+        DefaultsKey.quitProtectionQuitEnabled: false,
+        DefaultsKey.quitProtectionQuitMode: QuitProtectionMode.hold.rawValue,
+        DefaultsKey.quitProtectionQuitHoldDurationMs: QuitProtectionSupport.defaultHoldDurationMilliseconds,
+        DefaultsKey.quitProtectionQuitDoubleIntervalMs: QuitProtectionSupport.defaultDoublePressIntervalMilliseconds,
+        DefaultsKey.quitProtectionQuitExtraModifier: QuitProtectionExtraModifier.shift.rawValue,
+        DefaultsKey.quitProtectionQuitScope: QuitProtectionScope.all.rawValue,
+        DefaultsKey.quitProtectionQuitExceptions: [String](),
+        DefaultsKey.quitProtectionQuitShowFeedback: true,
+        DefaultsKey.quitProtectionCloseEnabled: false,
+        DefaultsKey.quitProtectionCloseMode: QuitProtectionMode.hold.rawValue,
+        DefaultsKey.quitProtectionCloseHoldDurationMs: QuitProtectionSupport.defaultHoldDurationMilliseconds,
+        DefaultsKey.quitProtectionCloseDoubleIntervalMs: QuitProtectionSupport.defaultDoublePressIntervalMilliseconds,
+        DefaultsKey.quitProtectionCloseExtraModifier: QuitProtectionExtraModifier.shift.rawValue,
+        DefaultsKey.quitProtectionCloseScope: QuitProtectionScope.all.rawValue,
+        DefaultsKey.quitProtectionCloseExceptions: [String](),
+        DefaultsKey.quitProtectionCloseShowFeedback: true,
         // When the shelf is on, the shake gesture is on too (still toggleable).
         DefaultsKey.shelfShortcutEnabled: true,
         DefaultsKey.shelfShortcut: "control+option+command:2",

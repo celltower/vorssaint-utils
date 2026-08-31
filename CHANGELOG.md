@@ -7,9 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Summary
-Vorssaint expands screen text recognition, capture magnifier, clipboard, Super key, Dock Preview, App Switcher, Window Layout, mouse controls and snippet controls, broadens app update and safe cleanup discovery, and hardens permission guide recovery, input session switching, Accessibility timeouts, Volume Mixer audio rendering and teardown, Super key shutdown, process termination, update and uninstallation teardown, window handling, pasteboard restoration, sensor selection, Cleaning Mode unlock and favicon downloads. It also improves mouse scrolling feel, disk space and system monitor metrics, Settings, Scratchpad, Screenshot Editor, floating panels and several menu bar behaviors.
+Vorssaint adds quit and close protections, expands screen text recognition, capture magnifier, clipboard, Super key, Dock Preview, App Switcher, Window Layout, mouse controls and snippet controls, broadens app update and safe cleanup discovery, and hardens permission guide recovery, input session switching, Accessibility timeouts, Volume Mixer audio rendering, helper process attribution and teardown, Super key shutdown, process termination, update and uninstallation teardown, window handling, pasteboard restoration, sensor selection, Cleaning Mode unlock and favicon downloads. It also improves mouse scrolling feel, disk space and system monitor metrics, Settings, Scratchpad, Screenshot Editor, floating panels and several menu bar behaviors.
 
 ### Added
+- Settings now includes optional protections for Command-Q and Command-W with customizable hold duration, double press, extra modifier requirements and per-app scopes. Thanks to @RuanMD.
 - The capture magnifier now shows each screen pixel on a grid with the pointer's position and color, moves one pixel at a time with the arrow keys, copies the color with C without ending the capture, and can optionally open enabled by default from Settings. Thanks to @ruvelro.
 - Mouse settings now include an optional control to disable pointer acceleration for connected mice, restoring the previous system setting when it is turned off or the app quits. Thanks to @CrowKiller.
 - Mouse settings now include an optional filter for rapid accidental extra clicks from worn primary, secondary and middle buttons.
@@ -20,6 +21,7 @@ Vorssaint expands screen text recognition, capture magnifier, clipboard, Super k
 - Dock Preview now includes an option in Settings to quit an app from a thumbnail's × button instead of closing only that window. Thanks to @arefshal.
 - Copy Text from Screen now includes an option in Settings to remove line breaks and join recognized lines as a single paragraph with script-aware spacing. Thanks to @ywu73.
 - Clipboard history now offers retention limit options for 10,000 items and unlimited storage.
+- Clipboard history multi-selection now offers a bulk deletion button and supports Command-Delete and Option-Delete to remove selected items at once. Thanks to @ElPotara.
 - Super key can now use Caps Lock or the right Command, Option, Control or Shift key, with the chosen key shown across Settings, shortcuts and the menu panel. Thanks to @JoanLaRosa.
 - The App Switcher appearance delay can now be adjusted between 0 and 500 ms in Settings. Thanks to @yasinozmeen.
 - The App Switcher can now open on the screen under the pointer, the screen with the menu bar or the screen with the active window. Thanks to @noahjstewart.
@@ -39,6 +41,7 @@ Vorssaint expands screen text recognition, capture magnifier, clipboard, Super k
 - Cleaner leftover scans now cover more preference panes and plugin folders while refusing nested app data, version folders, links and other ambiguous paths.
 
 ### Fixed
+- Volume Mixer now attributes helper audio processes whose system responsibility report is detached to their parent app, ensuring browsers and sandboxed communication apps are controllable.
 - Quit on close now captures windows created asynchronously after launch or on activation, ensuring apps that load their windows after process startup are quit when their last window is closed.
 - Shortcut fields and key display now read key caps from the active keyboard layout, so non-QWERTY layouts such as AZERTY display the keys actually pressed.
 - The Uninstaller and Cleaner leftover scans now accept two-component bundle identifiers, allowing apps with two-part domain names to be selected and cleaned.
