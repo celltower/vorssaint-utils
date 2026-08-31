@@ -1744,6 +1744,30 @@ struct MetricsTests {
         expectEqual(MetricFormat.percent(1), "100%", "percent full")
         expectEqual(MetricFormat.percent(1.4), "100%", "percent clamps high")
         expectEqual(MetricFormat.percent(-0.2), "0%", "percent clamps low")
+        expectClose(MetricFormat.boundedPercentage(130), 100,
+                    "process percentage clamps above full hardware utilization")
+        expectClose(MetricFormat.boundedPercentage(-5), 0,
+                    "process percentage clamps negative utilization")
+        expect(MetricFormat.machTimeNanoseconds(48_000_000,
+                                                numerator: 125,
+                                                denominator: 3) == 2_000_000_000,
+               "libproc CPU ticks convert through the platform Mach timebase")
+        expectClose(MetricFormat.processCPUPercentage(previousNanoseconds: 1_000_000_000,
+                                                       currentNanoseconds: 2_800_000_000,
+                                                       elapsed: 2,
+                                                       processorCount: 18), 5,
+                    "process CPU delta uses the monitor wall-clock interval and machine capacity")
+        expectClose(MetricFormat.processCPUPercentage(previousNanoseconds: 2_000_000_000,
+                                                       currentNanoseconds: 1_000_000_000,
+                                                       elapsed: 2,
+                                                       processorCount: 18), 0,
+                    "process CPU counter resets do not create utilization spikes")
+        expectClose(MetricFormat.processReconciliationScale(sampledTotal: 12,
+                                                             aggregatePercentage: 7), 7.0 / 12.0,
+                    "process usage scales down when attribution exceeds the aggregate")
+        expectClose(MetricFormat.processReconciliationScale(sampledTotal: 5,
+                                                             aggregatePercentage: 7), 1,
+                    "unattributed aggregate usage does not inflate process rows")
         expectEqual(MetricFormat.menuBarMemoryPercent(used: 79, total: 100), "79%",
                     "menu bar memory shows the current RAM percentage")
         expectEqual(MetricFormat.menuBarMemoryPercent(used: nil, total: 100), "--%",
@@ -3837,6 +3861,7 @@ struct MetricsTests {
         expect(GlobalShortcut(keyCode: Int64(kVK_ISO_Section),
                               modifiers: [.control, .option, .command]).isValid,
                "the extra ISO key (paragraph/caret above Tab) is recordable as a shortcut")
+        GlobalShortcut.startObservingKeyboardLayout()
         GlobalShortcut.refreshLayoutLabels()
         let backgroundISOKeyIsValid = DispatchQueue.global().sync {
             GlobalShortcut(keyCode: Int64(kVK_ISO_Section),
@@ -3844,6 +3869,75 @@ struct MetricsTests {
         }
         expect(backgroundISOKeyIsValid,
                "layout-dependent shortcut labels are safe to read off the main thread")
+        let shortcutM = GlobalShortcut(keyCode: Int64(kVK_ANSI_M), modifiers: [.control, .option, .command])
+        let shortcutSemi = GlobalShortcut(keyCode: Int64(kVK_ANSI_Semicolon), modifiers: [.control, .option, .command])
+        expect(shortcutM.isValid && !shortcutM.displayString.isEmpty,
+               "letter shortcuts resolve valid caps on the active keyboard layout")
+        expect(shortcutSemi.isValid && !shortcutSemi.displayString.isEmpty,
+               "punctuation and layout-specific keys resolve valid caps on the active keyboard layout")
+
+        // Multi-layout dynamic keycap resolution tests
+        let layoutTestModifiers: GlobalShortcutModifiers = [.control, .option, .command]
+        let layoutDict = [kTISPropertyInputSourceType: kTISTypeKeyboardLayout] as CFDictionary
+        let allLayoutSources = (TISCreateInputSourceList(layoutDict, true)?.takeRetainedValue() as? [TISInputSource]) ?? []
+        func testLayoutData(for idString: String) -> Data? {
+            guard let src = allLayoutSources.first(where: {
+                guard let id = TISGetInputSourceProperty($0, kTISPropertyInputSourceID) else { return false }
+                let str = Unmanaged<CFString>.fromOpaque(id).takeUnretainedValue() as String
+                return str == idString
+            }), let ptr = TISGetInputSourceProperty(src, kTISPropertyUnicodeKeyLayoutData) else {
+                return nil
+            }
+            return Unmanaged<CFData>.fromOpaque(ptr).takeUnretainedValue() as Data
+        }
+
+        if let frenchData = testLayoutData(for: "com.apple.keylayout.French") {
+            GlobalShortcut.refreshLayoutLabels(layoutData: frenchData)
+            let frenchM = GlobalShortcut(keyCode: Int64(kVK_ANSI_Semicolon), modifiers: layoutTestModifiers)
+            let frenchComma = GlobalShortcut(keyCode: Int64(kVK_ANSI_M), modifiers: layoutTestModifiers)
+            let frenchA = GlobalShortcut(keyCode: Int64(kVK_ANSI_Q), modifiers: layoutTestModifiers)
+            let frenchQ = GlobalShortcut(keyCode: Int64(kVK_ANSI_A), modifiers: layoutTestModifiers)
+            let frenchZ = GlobalShortcut(keyCode: Int64(kVK_ANSI_W), modifiers: layoutTestModifiers)
+            let frenchW = GlobalShortcut(keyCode: Int64(kVK_ANSI_Z), modifiers: layoutTestModifiers)
+            expectEqual(frenchM.displayString, "⌃⌥⌘M", "French AZERTY resolves physical semicolon key as M")
+            expectEqual(frenchComma.displayString, "⌃⌥⌘ ,", "French AZERTY resolves physical M key as comma")
+            expectEqual(frenchA.displayString, "⌃⌥⌘A", "French AZERTY resolves physical Q key as A")
+            expectEqual(frenchQ.displayString, "⌃⌥⌘Q", "French AZERTY resolves physical A key as Q")
+            expectEqual(frenchZ.displayString, "⌃⌥⌘Z", "French AZERTY resolves physical W key as Z")
+            expectEqual(frenchW.displayString, "⌃⌥⌘W", "French AZERTY resolves physical Z key as W")
+        }
+
+        if let germanData = testLayoutData(for: "com.apple.keylayout.German") {
+            GlobalShortcut.refreshLayoutLabels(layoutData: germanData)
+            let germanZ = GlobalShortcut(keyCode: Int64(kVK_ANSI_Y), modifiers: layoutTestModifiers)
+            let germanY = GlobalShortcut(keyCode: Int64(kVK_ANSI_Z), modifiers: layoutTestModifiers)
+            let germanOuml = GlobalShortcut(keyCode: Int64(kVK_ANSI_Semicolon), modifiers: layoutTestModifiers)
+            expectEqual(germanZ.displayString, "⌃⌥⌘Z", "German QWERTZ resolves physical Y key as Z")
+            expectEqual(germanY.displayString, "⌃⌥⌘Y", "German QWERTZ resolves physical Z key as Y")
+            expectEqual(germanOuml.displayString, "⌃⌥⌘Ö", "German QWERTZ resolves physical semicolon key as Ö")
+        }
+
+        if let abntData = testLayoutData(for: "com.apple.keylayout.Brazilian-ABNT2") {
+            GlobalShortcut.refreshLayoutLabels(layoutData: abntData)
+            let abntC = GlobalShortcut(keyCode: Int64(kVK_ANSI_Semicolon), modifiers: layoutTestModifiers)
+            expectEqual(abntC.displayString, "⌃⌥⌘Ç", "Brazilian ABNT2 resolves physical semicolon key as Ç")
+        }
+
+        if let usData = testLayoutData(for: "com.apple.keylayout.US") {
+            GlobalShortcut.refreshLayoutLabels(layoutData: usData)
+            let usM = GlobalShortcut(keyCode: Int64(kVK_ANSI_M), modifiers: layoutTestModifiers)
+            let usSemi = GlobalShortcut(keyCode: Int64(kVK_ANSI_Semicolon), modifiers: layoutTestModifiers)
+            expectEqual(usM.displayString, "⌃⌥⌘M", "US layout resolves physical M key as M")
+            expectEqual(usSemi.displayString, "⌃⌥⌘ ;", "US layout resolves physical semicolon key as semicolon")
+        }
+
+        GlobalShortcut.refreshLayoutLabels(layoutData: nil)
+        let fallbackM = GlobalShortcut(keyCode: Int64(kVK_ANSI_M), modifiers: layoutTestModifiers)
+        let fallbackSemi = GlobalShortcut(keyCode: Int64(kVK_ANSI_Semicolon), modifiers: layoutTestModifiers)
+        expectEqual(fallbackM.displayString, "⌃⌥⌘M", "nil layout falls back to ANSI M")
+        expectEqual(fallbackSemi.displayString, "⌃⌥⌘ ;", "nil layout falls back to ANSI semicolon")
+
+        GlobalShortcut.refreshLayoutLabels()
 
         // The native full screen action, wired like the sixths: real strings,
         // a stable id, and no system-wide key claimed until someone asks.
@@ -4860,6 +4954,9 @@ struct MetricsTests {
         expect(!AutoQuitSupport.shouldScheduleWindowCheck(for: .appDeactivated,
                                                           hasRecentCloseRequest: false),
                "AutoQuit does not treat app deactivation as a window close")
+        expect(!AutoQuitSupport.shouldScheduleWindowCheck(for: .appActivated,
+                                                          hasRecentCloseRequest: false),
+               "AutoQuit does not treat app activation as a window close")
         expect(!AutoQuitSupport.shouldScheduleWindowCheck(for: .mainWindowChanged,
                                                           hasRecentCloseRequest: false),
                "AutoQuit does not treat main window changes as a window close")
@@ -4950,24 +5047,34 @@ struct MetricsTests {
 
         expect(AutoQuitSupport.needsWindowWatchRetry(registeredWindows: 0,
                                                      listedWindows: 0,
-                                                     foundUserWindow: true),
+                                                     foundUserWindow: true,
+                                                     hadPriorWindows: false),
                "an app the window server still shows a window for is watched again")
         expect(AutoQuitSupport.needsWindowWatchRetry(registeredWindows: 1,
                                                      listedWindows: 2,
-                                                     foundUserWindow: true),
+                                                     foundUserWindow: true,
+                                                     hadPriorWindows: false),
                "a listed window whose notification failed is watched again")
         expect(!AutoQuitSupport.needsWindowWatchRetry(registeredWindows: 2,
-                                                      listedWindows: 2,
-                                                      foundUserWindow: true),
+                                                       listedWindows: 2,
+                                                       foundUserWindow: true,
+                                                       hadPriorWindows: false),
                "two registered windows cover the two Accessibility listed windows")
         expect(!AutoQuitSupport.needsWindowWatchRetry(registeredWindows: 1,
-                                                      listedWindows: 1,
-                                                      foundUserWindow: true),
+                                                       listedWindows: 1,
+                                                       foundUserWindow: true,
+                                                       hadPriorWindows: false),
                "a registered window is the watch, so nothing is retried")
+        expect(AutoQuitSupport.needsWindowWatchRetry(registeredWindows: 0,
+                                                     listedWindows: 0,
+                                                     foundUserWindow: false,
+                                                     hadPriorWindows: false),
+               "an app with no window on launch is retried during the initial watch window")
         expect(!AutoQuitSupport.needsWindowWatchRetry(registeredWindows: 0,
-                                                      listedWindows: 0,
-                                                      foundUserWindow: false),
-               "an app with no window anywhere is not eligible and needs no watch")
+                                                       listedWindows: 0,
+                                                       foundUserWindow: false,
+                                                       hadPriorWindows: true),
+               "an app that had prior windows and now closed its last window needs no watch retry")
         expect(AutoQuitSupport.isWindowNotificationRegistered(.success),
                "a window whose notification was accepted is watched")
         expect(AutoQuitSupport.isWindowNotificationRegistered(.notificationAlreadyRegistered),
@@ -7735,6 +7842,80 @@ struct MetricsTests {
         expect(ShelfEdgeDragSupport.stillNear(shippedLeftMatch, point: CGPoint(x: 100, y: 500),
                                               distance: ShelfEdgeDragSupport.retreatDistance),
                "the shipped retreat distance comfortably covers the peeking panel's own on-screen strip")
+
+        // MARK: Shelf dock drag support
+
+        expect(ShelfDockDragSupport.dwell == 0.15, "dock drag dwell is 150ms")
+        expect(ShelfDockDragSupport.triggerMargin == 16, "dock trigger margin is 16pt")
+        expect(ShelfDockDragSupport.retreatMargin == 32, "dock retreat margin is 32pt")
+
+        let testAnchor = CGRect(x: 1200, y: 954, width: 28, height: 28)
+        let testPill = CGRect(x: 1178, y: 920, width: 72, height: 30)
+        let testCard = CGRect(x: 1094, y: 690, width: 240, height: 260)
+        let testScreen = CGRect(x: 0, y: 0, width: 1512, height: 982)
+
+        let resolvedTrigger = ShelfDockDragSupport.triggerFrame(pillFrame: testPill,
+                                                               anchorFrame: testAnchor,
+                                                               screenFrame: testScreen)
+        expect(resolvedTrigger != nil, "trigger frame resolves with pill and anchor")
+        if let trigger = resolvedTrigger {
+            expect(trigger.minX == testPill.minX - 16, "trigger frame left margin")
+            expect(trigger.maxX == testPill.maxX + 16, "trigger frame right margin")
+            expect(trigger.minY == testPill.minY - 16, "trigger frame bottom margin")
+            expect(trigger.maxY == testAnchor.maxY, "trigger frame top margin covers menu bar anchor")
+        }
+
+        let fallbackTrigger = ShelfDockDragSupport.triggerFrame(pillFrame: nil,
+                                                                anchorFrame: testAnchor,
+                                                                screenFrame: testScreen)
+        expect(fallbackTrigger != nil, "trigger frame resolves with anchor alone")
+
+        expect(ShelfDockDragSupport.triggerFrame(pillFrame: nil, anchorFrame: nil, screenFrame: testScreen) == nil,
+               "trigger frame returns nil when neither pill nor anchor is available")
+
+        expect(ShelfDockDragSupport.isPointNearDock(point: CGPoint(x: 1200, y: 930),
+                                                   isProximate: false,
+                                                   panelFrame: testPill,
+                                                   anchorFrame: testAnchor,
+                                                   screenFrame: testScreen),
+               "point over the collapsed pill is near dock")
+
+        expect(!ShelfDockDragSupport.isPointNearDock(point: CGPoint(x: 1200, y: 800),
+                                                    isProximate: false,
+                                                    panelFrame: testPill,
+                                                    anchorFrame: testAnchor,
+                                                    screenFrame: testScreen),
+               "point 120pt below the pill is outside the calibrated trigger area")
+        expect(!ShelfDockDragSupport.isPointNearDock(point: CGPoint(x: 1050, y: 930),
+                                                    isProximate: false,
+                                                    panelFrame: testPill,
+                                                    anchorFrame: testAnchor,
+                                                    screenFrame: testScreen),
+               "point 150pt to the left of the pill is outside the calibrated trigger area")
+
+        expect(ShelfDockDragSupport.isPointNearDock(point: CGPoint(x: 1200, y: 800),
+                                                   isProximate: true,
+                                                   panelFrame: testCard,
+                                                   anchorFrame: testAnchor,
+                                                   screenFrame: testScreen),
+               "point inside the expanded card is near dock when proximate")
+        expect(ShelfDockDragSupport.isPointNearDock(point: CGPoint(x: 1080, y: 800),
+                                                   isProximate: true,
+                                                   panelFrame: testCard,
+                                                   anchorFrame: testAnchor,
+                                                   screenFrame: testScreen),
+               "point within retreat margin of expanded card remains near dock")
+        expect(!ShelfDockDragSupport.isPointNearDock(point: CGPoint(x: 1000, y: 800),
+                                                    isProximate: true,
+                                                    panelFrame: testCard,
+                                                    anchorFrame: testAnchor,
+                                                    screenFrame: testScreen),
+               "point outside retreat margin of expanded card leaves near dock")
+
+        expect(!ShelfDockDragSupport.hasDwelled(since: 100.0, now: 100.08, required: 0.15),
+               "short drag pass under 150ms does not count as dwelled")
+        expect(ShelfDockDragSupport.hasDwelled(since: 100.0, now: 100.16, required: 0.15),
+               "sustained hover over 150ms counts as dwelled")
 
         let shelfFile = ShelfPersistedItem(id: UUID(), kind: .file, title: "notes.pdf",
                                            path: "/tmp/notes.pdf")
@@ -16107,11 +16288,43 @@ struct MetricsTests {
                     "scrolling up zooms the capture loupe in")
         expectClose(ScreenshotSupport.captureLoupeZoom(0.5, adjustedBy: -1), 0.5,
                     "capture loupe zoom stays above its minimum")
-        expectClose(ScreenshotSupport.captureLoupeZoom(4, adjustedBy: 1), 4,
+        expectClose(ScreenshotSupport.captureLoupeZoom(10, adjustedBy: 1),
+                    ScreenshotSupport.captureLoupeMaxZoom,
                     "capture loupe zoom stays below its maximum")
-        expectClose(ScreenshotSupport.captureLoupeSampleSide(zoom: 2),
-                    Double(ScreenshotSupport.captureLoupeBaseSampleSide) / 2,
+        expectClose(ScreenshotSupport.captureLoupeMaxZoom,
+                    ScreenshotSupport.captureLoupeBaseSampleSide
+                        / ScreenshotSupport.captureLoupeMinSampleSide,
+                    "the zoom ceiling is derived from the smallest useful sample")
+        expectClose(ScreenshotSupport.captureLoupeZoom(4, adjustedBy: 1),
+                    ScreenshotSupport.captureLoupeMaxZoom,
+                    "zoom reaches the three-pixel sample without a dead range above it")
+        expectClose(ScreenshotSupport.captureLoupeSampleSide(zoom: 2), 7,
                     "higher capture loupe zoom samples fewer source pixels")
+        expectClose(ScreenshotSupport.captureLoupeSampleSide(zoom: 0.5), 27,
+                    "zooming the loupe out widens the sample")
+        expectClose(ScreenshotSupport.captureLoupeSampleSide(
+            zoom: ScreenshotSupport.captureLoupeMaxZoom), 3,
+                    "maximum loupe zoom keeps a three pixel sample around the pointer")
+        expect([0.5, 1, 2, 4, ScreenshotSupport.captureLoupeMaxZoom].allSatisfy { zoom in
+            let side = ScreenshotSupport.captureLoupeSampleSide(zoom: zoom)
+            return side.truncatingRemainder(dividingBy: 2) == 1
+        }, "every loupe sample side is odd so an exact center pixel exists")
+        expect(ScreenshotSupport.captureLoupeGridVisible(
+                    frameSide: ScreenshotSupport.captureLoupeFrameSide, sampleSide: 13)
+                && !ScreenshotSupport.captureLoupeGridVisible(
+                    frameSide: ScreenshotSupport.captureLoupeFrameSide, sampleSide: 27)
+                && !ScreenshotSupport.captureLoupeGridVisible(
+                    frameSide: ScreenshotSupport.captureLoupeFrameSide, sampleSide: 0),
+               "the loupe pixel grid appears only when cells are readable")
+        expect(ScreenshotSupport.captureLoupeNudge(dx: 1, dy: 0, fast: false, scale: 2)
+                == CGPoint(x: 0.5, y: 0),
+               "an arrow nudge moves exactly one device pixel on Retina")
+        expect(ScreenshotSupport.captureLoupeNudge(dx: 0, dy: -1, fast: true, scale: 2)
+                == CGPoint(x: 0, y: -5),
+               "a shifted nudge covers ten device pixels")
+        expect(ScreenshotSupport.captureLoupeNudge(dx: -1, dy: 1, fast: false, scale: 0)
+                == CGPoint(x: -1, y: 1),
+               "a missing display scale falls back to whole points")
 
         expect(Defaults.registeredDefaults[DefaultsKey.screenshotFreeze] as? Bool == true,
                "the screen freezes during selection by default")
@@ -16121,6 +16334,8 @@ struct MetricsTests {
                "screenshot annotation shadows ship off")
         expect(Defaults.registeredDefaults[DefaultsKey.screenshotShowLastRegion] as? Bool == true,
                "the previous capture outline stays visible by default, as it always was")
+        expect(Defaults.registeredDefaults[DefaultsKey.screenshotLoupeStartsOn] as? Bool == false,
+               "the always-on loupe is an opt-in and ships off")
         expect(Defaults.registeredDefaults[DefaultsKey.screenshotToolShortcutsEnabled] as? Bool == true,
                "screenshot number shortcuts ship enabled")
         expect(Defaults.registeredDefaults[DefaultsKey.screenshotPreviewPosition] as? String == "",
