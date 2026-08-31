@@ -534,9 +534,13 @@ final class MouseButtonShortcutService: ObservableObject {
         }
         guard let shortcut = mappings[input] else { return Unmanaged.passUnretained(event) }
         let sourceProcessID = event.getIntegerValueField(.eventSourceUnixProcessID)
+        let targetProcessID = event.getIntegerValueField(.eventTargetUnixProcessID)
         if !wasPreflighted,
            MouseAppExceptions.shared.excludesActionTarget(
-            .buttonShortcuts, at: event.location, sourceProcessID: sourceProcessID
+            .buttonShortcuts,
+            at: event.location,
+            sourceProcessID: sourceProcessID,
+            targetProcessID: targetProcessID
            ) {
             return Unmanaged.passUnretained(event)
         }

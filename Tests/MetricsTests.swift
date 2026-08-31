@@ -18029,6 +18029,13 @@ struct MetricsTests {
             encoding: .utf8)) ?? ""
         expect(shortcutSource.contains("excludesActionTarget("),
                "side-wheel preflight uses the same synchronous action check as its handler")
+        let handleSideWheelSource = shortcutSource
+            .components(separatedBy: "private func handleSideWheel")
+            .dropFirst()
+            .first ?? ""
+        expect(handleSideWheelSource.contains("eventTargetUnixProcessID")
+                && handleSideWheelSource.contains("targetProcessID: targetProcessID"),
+               "the un-preflighted side-wheel handler passes the event target pid")
 
         for language in AppLanguage.allCases {
             let strings = FeatureStrings.mouseExceptions(language)
