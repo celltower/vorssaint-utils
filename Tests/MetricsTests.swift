@@ -5215,6 +5215,23 @@ struct MetricsTests {
         }
         expect(missingWindowWatchRetryCode.isEmpty,
                "the AutoQuit window-watch retry stays bounded, origin-based, re-armed by Space changes, and counts only windows whose destroy notification registered: missing \(missingWindowWatchRetryCode)")
+        // Coalescing is only safe while the state it reads is torn down with
+        // the app: a refresh left pending for a detached app would run against
+        // an observer that is gone.
+        let refreshCoalescingCode = [
+            "guard pendingRefreshes.insert(pid).inserted else { return }",
+            "self.pendingRefreshes.remove(pid) != nil",
+            "pendingRefreshes.removeAll()",
+        ]
+        let missingRefreshCoalescingCode = refreshCoalescingCode.filter {
+            autoQuitServiceCodeLines(containing: $0).isEmpty
+        }
+        expect(missingRefreshCoalescingCode.isEmpty,
+               "AutoQuit collapses a burst of notifications into one refresh and drops it when the app goes: missing \(missingRefreshCoalescingCode)")
+        // Two lines drop the pending refresh: the deferred block's own guard
+        // and `detach`. Losing the second is the case this counts.
+        expect(autoQuitServiceCodeLines(containing: "pendingRefreshes.remove(pid)").count == 2,
+               "a pending AutoQuit refresh is dropped both when it runs and when the app is detached")
         let closeCheckOffsetCode = [
             "private static let closeCheckOffsets: [TimeInterval] = [0.35, 1.0, 2.2]",
             "for offset in Self.closeCheckOffsets",
@@ -13522,6 +13539,23 @@ struct MetricsTests {
                     sourceLabel: "Right ⌘",
                     superKeyModifiers: [.control, .option, .command]) == nil,
                "the shortcut editor follows the configured Super key modifiers")
+
+        // MARK: Super key held-key watchdog
+        // The source key (F18) does not autorepeat, so a steadily-held key
+        // reaches the watchdog just like a lost release. The physical key state
+        // is what tells them apart.
+        expect(SuperKeySupport.heldKeyWatchdogOutcome(physicalKeyDown: true, stateThinksHeld: true, tapAlive: true)
+                == .reArm,
+               "a key still physically down keeps the hold alive")
+        expect(SuperKeySupport.heldKeyWatchdogOutcome(physicalKeyDown: false, stateThinksHeld: true, tapAlive: true)
+                == .forget,
+               "a key that has come up ends the hold (its release was missed)")
+        expect(SuperKeySupport.heldKeyWatchdogOutcome(physicalKeyDown: true, stateThinksHeld: false, tapAlive: true)
+                == .forget,
+               "nothing to keep alive once the state is no longer held")
+        expect(SuperKeySupport.heldKeyWatchdogOutcome(physicalKeyDown: true, stateThinksHeld: true, tapAlive: false)
+                == .forget,
+               "a torn-down tap cannot stamp modifiers, so the hold is dropped")
 
         // MARK: Features hub strings
 
@@ -21874,6 +21908,43 @@ struct MetricsTests {
             expect(code.contains("CFMachPortInvalidate"),
                    "\(tapOwner) hands its tap back rather than only disabling it")
         }
+
+        // Disabling a tap and dropping the last Swift reference does not hand
+        // the port back: CGGetEventTapList still reports the tap against this
+        // process, one more per start/stop cycle, for the life of the process.
+        // Only CFMachPortInvalidate deregisters it. Counted per tap rather than
+        // per file, because BrightnessService and SuperKeyService own two taps
+        // each and WindowLayoutService three, and on comment-stripped source,
+        // as in the per-service check above, so prose naming the API cannot
+        // answer for a missing call. A margin does not cover a tap added later:
+        // MouseClickDebounceService's two invalidations are both on its one
+        // tap. The owners reached are counted too, because a file with no
+        // literal CGEvent.tapCreate is skipped, so moving the call behind a
+        // helper would otherwise leave a sweep that passes having read nothing.
+        var tapOwnersWithoutInvalidate: [String] = []
+        var tapOwners = 0
+        let tapOwnerSources = FileManager.default
+            .enumerator(atPath: "Sources/Vorssaint")?
+            .compactMap { $0 as? String }
+            .filter { $0.hasSuffix(".swift") && !$0.contains(" 2") } ?? []
+        for file in tapOwnerSources.sorted() {
+            guard let source = try? String(contentsOfFile: "Sources/Vorssaint/\(file)",
+                                           encoding: .utf8) else { continue }
+            let code = source.components(separatedBy: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+            let taps = code.components(separatedBy: "CGEvent.tapCreate").count - 1
+            guard taps > 0 else { continue }
+            tapOwners += 1
+            let invalidations = code.components(separatedBy: "CFMachPortInvalidate").count - 1
+            if invalidations < taps {
+                tapOwnersWithoutInvalidate.append("\(file) (\(taps) taps, \(invalidations) invalidated)")
+            }
+        }
+        expect(tapOwners > 0 && tapOwnersWithoutInvalidate.isEmpty,
+               "every event tap owner invalidates its port on teardown, across "
+               + "\(tapOwners) scanned owners: \(tapOwnersWithoutInvalidate)")
+
         let mouseTapAppDelegateSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/App/AppDelegate.swift",
             encoding: .utf8)) ?? ""
