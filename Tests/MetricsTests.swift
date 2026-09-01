@@ -421,6 +421,22 @@ struct MetricsTests {
                "Esc closes the panel when nothing is selected")
         expect(ClipboardHistoryEscape.action(batchCount: 2) == .clearBatchSelection,
                "Esc clears a batch selection before it closes the panel")
+        expect(ClipboardHistoryFocus.textViewOwnsKeys(isComposing: true,
+                                                      isFieldEditor: true,
+                                                      isEditable: true),
+               "a composing search field keeps Return, the arrows and Esc")
+        expect(!ClipboardHistoryFocus.textViewOwnsKeys(isComposing: false,
+                                                       isFieldEditor: true,
+                                                       isEditable: true),
+               "the list keeps its shortcuts over a search field that is not composing")
+        expect(ClipboardHistoryFocus.textViewOwnsKeys(isComposing: false,
+                                                      isFieldEditor: false,
+                                                      isEditable: true),
+               "the multiline editor owns its editing keys")
+        expect(!ClipboardHistoryFocus.textViewOwnsKeys(isComposing: false,
+                                                       isFieldEditor: false,
+                                                       isEditable: false),
+               "the read-only preview leaves the list's shortcuts intact")
         expect(ClipboardHistoryEditing.canSave(original: "First draft", draft: "Second draft"),
                "clipboard text can save a real edit")
         expect(!ClipboardHistoryEditing.canSave(original: "Same", draft: "Same"),
@@ -2821,6 +2837,13 @@ struct MetricsTests {
                "per-app switcher rules start empty, so existing choices stay unchanged")
         expect(registeredDefaults[DefaultsKey.switcherCurrentSpaceOnly] as? Bool == false,
                "the switcher keeps showing every desktop unless the user opts out (issue #337)")
+        expect(registeredDefaults[DefaultsKey.switcherTakeOverSystemShortcuts] as? Bool == false
+               && SettingsBackupSupport.exportKeys().contains(
+                    DefaultsKey.switcherTakeOverSystemShortcuts)
+               && registeredDefaults[DefaultsKey.switcherNativeHotkeysSuppressed] == nil
+               && !SettingsBackupSupport.exportKeys().contains(
+                    DefaultsKey.switcherNativeHotkeysSuppressed),
+               "native shortcut takeover is opt-in while its crash marker stays on this Mac")
         expect(registeredDefaults[DefaultsKey.switcherSearchPinEnabled] as? Bool == false
                && SettingsBackupSupport.exportKeys().contains(DefaultsKey.switcherSearchPinEnabled),
                "the optional pinned search starts off and travels with the user's settings backup")
@@ -2875,14 +2898,23 @@ struct MetricsTests {
                "a window touching no display, an entry without a frame, or no display at all leave the screen to the fallback")
 
         // MARK: Switcher entries for apps with no window (issue #351)
-        expect(SwitcherWindowlessApps.mode(storedValue: nil) == .finder
-               && SwitcherWindowlessApps.mode(storedValue: "") == .finder
-               && SwitcherWindowlessApps.mode(storedValue: "bogus") == .finder,
+        expect(SwitcherWindowlessApps.mode(storedValue: nil,
+                                           takeOverSystemShortcuts: false) == .finder
+               && SwitcherWindowlessApps.mode(storedValue: "",
+                                              takeOverSystemShortcuts: false) == .finder
+               && SwitcherWindowlessApps.mode(storedValue: "bogus",
+                                              takeOverSystemShortcuts: false) == .finder,
                "an unset or unreadable windowless apps choice falls back to what the app shipped with")
-        expect(SwitcherWindowlessApps.mode(storedValue: "off") == .off
-               && SwitcherWindowlessApps.mode(storedValue: "finder") == .finder
-               && SwitcherWindowlessApps.mode(storedValue: "all") == .all,
+        expect(SwitcherWindowlessApps.mode(storedValue: "off",
+                                           takeOverSystemShortcuts: false) == .off
+               && SwitcherWindowlessApps.mode(storedValue: "finder",
+                                              takeOverSystemShortcuts: false) == .finder
+               && SwitcherWindowlessApps.mode(storedValue: "all",
+                                              takeOverSystemShortcuts: false) == .all,
                "every windowless apps choice survives a round trip through preferences")
+        expect(SwitcherWindowlessApps.mode(storedValue: "off",
+                                           takeOverSystemShortcuts: true) == .all,
+               "native shortcut takeover keeps every running app reachable")
         expect(SwitcherWindowlessApps.migrated(showsWindowlessFinder: true) == .finder
                && SwitcherWindowlessApps.migrated(showsWindowlessFinder: false) == .off,
                "the old windowless Finder toggle maps onto the choice that keeps its behavior")
@@ -3931,11 +3963,55 @@ struct MetricsTests {
             expectEqual(usSemi.displayString, "⌃⌥⌘ ;", "US layout resolves physical semicolon key as semicolon")
         }
 
+        // A keycap names a combination, not a key, and macOS resolves a Command
+        // combination through the layout's Command table. Layouts that type a
+        // non-Latin script answer differently there than they do bare, and
+        // DVORAK-QWERTYCMD exists for nothing but that difference, so both
+        // tables have to come out of the same layout.
+        if let russianData = testLayoutData(for: "com.apple.keylayout.Russian") {
+            GlobalShortcut.refreshLayoutLabels(layoutData: russianData)
+            let russianCommandQ = GlobalShortcut(keyCode: Int64(kVK_ANSI_Q), modifiers: layoutTestModifiers)
+            let russianBareQ = GlobalShortcut(keyCode: Int64(kVK_ANSI_Q), modifiers: [.control, .option])
+            expectEqual(russianCommandQ.displayString, "⌃⌥⌘Q",
+                        "Russian reads a Command shortcut off the layout's Command table")
+            expectEqual(russianBareQ.displayString, "⌃⌥Й",
+                        "Russian reads a shortcut without Command off the character the key types")
+        }
+
+        if let dvorakCommandData = testLayoutData(for: "com.apple.keylayout.DVORAK-QWERTYCMD") {
+            GlobalShortcut.refreshLayoutLabels(layoutData: dvorakCommandData)
+            let dvorakCommandSemi = GlobalShortcut(keyCode: Int64(kVK_ANSI_Semicolon),
+                                                   modifiers: layoutTestModifiers)
+            let dvorakBareSemi = GlobalShortcut(keyCode: Int64(kVK_ANSI_Semicolon),
+                                                modifiers: [.control, .option])
+            expectEqual(dvorakCommandSemi.displayString, "⌃⌥⌘ ;",
+                        "Dvorak with QWERTY Command keeps Command shortcuts on the QWERTY cap")
+            expectEqual(dvorakBareSemi.displayString, "⌃⌥S",
+                        "Dvorak with QWERTY Command keeps the rest on the Dvorak cap")
+        }
+
+        // The ANSI table answers when no layout can be read at all. On a live
+        // system that is a caller off the main thread meeting a cold cache:
+        // Text Input Services cannot be asked from there, so nothing derives a
+        // cap and nothing warms the entry either.
         GlobalShortcut.refreshLayoutLabels(layoutData: nil)
-        let fallbackM = GlobalShortcut(keyCode: Int64(kVK_ANSI_M), modifiers: layoutTestModifiers)
-        let fallbackSemi = GlobalShortcut(keyCode: Int64(kVK_ANSI_Semicolon), modifiers: layoutTestModifiers)
-        expectEqual(fallbackM.displayString, "⌃⌥⌘M", "nil layout falls back to ANSI M")
-        expectEqual(fallbackSemi.displayString, "⌃⌥⌘ ;", "nil layout falls back to ANSI semicolon")
+        var coldCacheCaps: [String] = []
+        let coldCacheDone = DispatchSemaphore(value: 0)
+        // A thread of its own, not `sync`: dispatch runs a synchronous block on
+        // whichever thread called it, so `sync` would still be the main thread
+        // and would reach Text Input Services after all.
+        Thread {
+            coldCacheCaps = [
+                GlobalShortcut(keyCode: Int64(kVK_ANSI_M), modifiers: layoutTestModifiers).displayString,
+                GlobalShortcut(keyCode: Int64(kVK_ANSI_Semicolon), modifiers: layoutTestModifiers).displayString,
+            ]
+            coldCacheDone.signal()
+        }.start()
+        coldCacheDone.wait()
+        expectEqual(coldCacheCaps.first ?? "", "⌃⌥⌘M",
+                    "a cold cache off the main thread falls back to ANSI M")
+        expectEqual(coldCacheCaps.last ?? "", "⌃⌥⌘ ;",
+                    "a cold cache off the main thread falls back to ANSI semicolon")
 
         GlobalShortcut.refreshLayoutLabels()
 
@@ -4431,8 +4507,8 @@ struct MetricsTests {
                "third party identifiers are eligible for the leftover check")
         expect(UninstallerSupport.verifiedBundleID("com.vendor.editor") == "com.vendor.editor"
                && UninstallerSupport.verifiedBundleID("com.vendor.editor.helper") == "com.vendor.editor.helper"
-               && UninstallerSupport.verifiedBundleID("md.obsidian") == "md.obsidian"
-               && UninstallerSupport.verifiedBundleID("notion.id") == "notion.id",
+               && UninstallerSupport.verifiedBundleID("test.editor") == "test.editor"
+               && UninstallerSupport.verifiedBundleID("editor.test") == "editor.test",
                "the uninstaller accepts exact third party bundle identifiers, two-component IDs, and embedded helpers")
         expect(UninstallerSupport.verifiedBundleID(nil) == nil
                && UninstallerSupport.verifiedBundleID("") == nil
@@ -4552,17 +4628,17 @@ struct MetricsTests {
                                                          displayNames: ["Example App 2"])),
                "spaces and trailing version numbers do not hide a leftover named after the app")
         let twoPartIdentity = UninstallerSupport.identity(
-            primaryBundleID: "md.obsidian",
-            bundleIDs: ["md.obsidian"],
-            displayNames: ["Obsidian", "Obsidian.app"])
-        expect(twoPartIdentity.nameTokens.contains("obsidian")
-               && twoPartIdentity.bundleIDs.contains("md.obsidian"),
+            primaryBundleID: "test.editor",
+            bundleIDs: ["test.editor"],
+            displayNames: ["Editor", "Editor.app"])
+        expect(twoPartIdentity.nameTokens.contains("editor")
+               && twoPartIdentity.bundleIDs.contains("test.editor"),
                "two-part bundle identifiers yield both display name tokens and exact bundle IDs")
-        expect(UninstallerSupport.leftoverMatch("Obsidian", identity: twoPartIdentity) == .related
-               && UninstallerSupport.leftoverMatch("obsidian", identity: twoPartIdentity) == .related
-               && UninstallerSupport.leftoverMatch("md.obsidian.plist", identity: twoPartIdentity) == .exact
-               && UninstallerSupport.leftoverMatch("md.obsidian", identity: twoPartIdentity) == .exact
-               && UninstallerSupport.leftoverMatch("md.obsidian.ShipIt", identity: twoPartIdentity) == .related
+        expect(UninstallerSupport.leftoverMatch("Editor", identity: twoPartIdentity) == .related
+               && UninstallerSupport.leftoverMatch("editor", identity: twoPartIdentity) == .related
+               && UninstallerSupport.leftoverMatch("test.editor.plist", identity: twoPartIdentity) == .exact
+               && UninstallerSupport.leftoverMatch("test.editor", identity: twoPartIdentity) == .exact
+               && UninstallerSupport.leftoverMatch("test.editor.helper", identity: twoPartIdentity) == .related
                && UninstallerSupport.leftoverMatch("Unrelated", identity: twoPartIdentity) == .none,
                "two-part bundle identifiers match exact and related leftovers correctly")
         expect(UninstallerSupport.identity(primaryBundleID: "com.vendor.browser",
@@ -4794,22 +4870,22 @@ struct MetricsTests {
                "stale DeviceSupport symbol caches count as developer junk")
         expect(CleanerSupport.looksLikeBundleID("com.vendor.editor")
                && CleanerSupport.looksLikeBundleID("com.foo.Bar-Helper_2")
-               && CleanerSupport.looksLikeBundleID("md.obsidian")
-               && CleanerSupport.looksLikeBundleID("notion.id")
+               && CleanerSupport.looksLikeBundleID("test.editor")
+               && CleanerSupport.looksLikeBundleID("editor.test")
                && CleanerSupport.looksLikeBundleID("com.foo"),
                "reverse DNS names and two-component bundle identifiers are recognized")
         expect(!CleanerSupport.looksLikeBundleID("VendorFolder")
-               && !CleanerSupport.looksLikeBundleID("Obsidian")
+               && !CleanerSupport.looksLikeBundleID("Editor")
                && !CleanerSupport.looksLikeBundleID("com..foo")
                && !CleanerSupport.looksLikeBundleID(".com.foo")
                && !CleanerSupport.looksLikeBundleID("com.foo.")
                && !CleanerSupport.looksLikeBundleID("com.foo.bár"),
                "plain names, empty parts and odd characters never match by name")
         expect(CleanerSupport.bundleIDCandidate(fromEntryName: "com.vendor.editor.plist") == "com.vendor.editor"
-               && CleanerSupport.bundleIDCandidate(fromEntryName: "md.obsidian.plist") == "md.obsidian"
+               && CleanerSupport.bundleIDCandidate(fromEntryName: "test.editor.plist") == "test.editor"
                && CleanerSupport.bundleIDCandidate(fromEntryName: "group.com.foo.bar") == "com.foo.bar"
-               && CleanerSupport.bundleIDCandidate(fromEntryName: "group.md.obsidian") == "md.obsidian"
-               && CleanerSupport.bundleIDCandidate(fromEntryName: "ABCD123456.md.obsidian") == "md.obsidian"
+               && CleanerSupport.bundleIDCandidate(fromEntryName: "group.test.editor") == "test.editor"
+               && CleanerSupport.bundleIDCandidate(fromEntryName: "ABCD123456.test.editor") == "test.editor"
                && CleanerSupport.bundleIDCandidate(fromEntryName: "com.foo.bar.savedState") == "com.foo.bar"
                && CleanerSupport.bundleIDCandidate(fromEntryName: "com.foo.bar.binarycookies") == "com.foo.bar",
                "entry names map to their owning bundle identifier")
@@ -7931,6 +8007,15 @@ struct MetricsTests {
                "short drag pass under 150ms does not count as dwelled")
         expect(ShelfDockDragSupport.hasDwelled(since: 100.0, now: 100.16, required: 0.15),
                "sustained hover over 150ms counts as dwelled")
+        let shelfServiceSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/Shelf/ShelfService.swift",
+            encoding: .utf8)) ?? ""
+        let dockedWatchdog = shelfServiceSource
+            .components(separatedBy: "private func startDockedWatchdog()")
+            .dropFirst().first?.components(separatedBy: "\n    private func ").first ?? ""
+        expect(dockedWatchdog.contains("updateDockedProximity(")
+                && dockedWatchdog.contains("handleDragForEdge(at:"),
+               "the drag watchdog finishes dock and edge dwells after pointer movement stops")
 
         let shelfFile = ShelfPersistedItem(id: UUID(), kind: .file, title: "notes.pdf",
                                            path: "/tmp/notes.pdf")
@@ -8692,6 +8777,17 @@ struct MetricsTests {
                     query: "automatically", items: availabilityItems,
                     isAvailable: onlyScratchpadAvailable).isEmpty,
                "setting fields owned by an unavailable utility stay out of suggestions")
+        let availableCameraSetting = SettingsSearchSupport.groupedMatchingItems(
+            query: "automatically", items: availabilityItems,
+            isAvailable: { _ in true }).first?.suggestions.first
+        let availableCameraSettingRoute = availableCameraSetting.map {
+            SettingsSearchSupport.route(for: $0, isAvailable: { _ in true })
+        }
+        expect(availableCameraSetting?.title == "Open camera automatically"
+                && availableCameraSettingRoute?.destination
+                    == FeatureSettingsDestination(.quickTools, sectionAnchor: .cameraPreview)
+                && availableCameraSettingRoute?.targetFeature == nil,
+               "a feature-owned setting keyword opens its exact anchored section")
         let availableScratchpadGroups = SettingsSearchSupport.groupedMatchingItems(
             query: "scratchpad", items: availabilityItems,
             isAvailable: onlyScratchpadAvailable)
@@ -9239,6 +9335,9 @@ struct MetricsTests {
                && dockPreviewServiceCode.contains("CGWindowListCopyWindowInfo(.optionOnScreenOnly")
                && dockPreviewServiceCode.contains("DockPreviewSupport.panelFrameWhenDockHidden("),
                "an entered auto-hide Dock Preview follows the Dock's live window to the vacated edge")
+        expect(dockPreviewServiceCode.contains("if accepted { self?.endSession() }")
+                && dockPreviewServiceCode.contains("if accepted { self?.closePreviewPanel() }"),
+               "an accepted app quit closes both hover and pinned previews immediately")
         // The jump is the Dock's thickness, an order of magnitude past
         // panelStayMargin, so a pointer that never moved would otherwise read as
         // outside the panel on its next twitch and dismiss the preview.
@@ -9502,10 +9601,14 @@ struct MetricsTests {
         } else {
             UserDefaults.standard.removeObject(forKey: DefaultsKey.previewSize)
         }
+        if let usData = testLayoutData(for: "com.apple.keylayout.US") {
+            GlobalShortcut.refreshLayoutLabels(layoutData: usData)
+        }
         let defaultSwitcherHints = SwitcherSupport.shortcutHints(for: .switcherDefault,
                                                                  windowShortcut: .switcherWindowDefault)
         expect(defaultSwitcherHints.apps == "⌘Tab" && defaultSwitcherHints.windows == "⌘ `",
                "App Switcher icon-row hints describe default app and window shortcuts")
+        GlobalShortcut.refreshLayoutLabels()
         let customSwitcherHints = SwitcherSupport.shortcutHints(
             for: GlobalShortcut(keyCode: Int64(kVK_Tab), modifiers: [.option]),
             windowShortcut: GlobalShortcut(keyCode: Int64(kVK_ANSI_J), modifiers: [.command])
@@ -9759,7 +9862,7 @@ struct MetricsTests {
                                        hasModifiers: false,
                                        minimizeEnabled: true,
                                        cycleWindowsEnabled: true,
-                                       unminimizedWindowCount: 3) == .cycleWindows,
+                                       cycleCandidateCount: 3) == .cycleWindows,
                "dock click cycles instead of minimizing when both are on and there are windows to cycle")
         expect(DockClickSupport.action(appIsFrontmost: true,
                                        hasUnminimizedWindows: true,
@@ -9768,7 +9871,7 @@ struct MetricsTests {
                                        hasModifiers: false,
                                        minimizeEnabled: true,
                                        cycleWindowsEnabled: true,
-                                       unminimizedWindowCount: 1) == .minimize,
+                                       cycleCandidateCount: 1) == .minimize,
                "dock click still minimizes a single-window app with cycling on")
         expect(DockClickSupport.action(appIsFrontmost: true,
                                        hasUnminimizedWindows: true,
@@ -9777,7 +9880,7 @@ struct MetricsTests {
                                        hasModifiers: false,
                                        minimizeEnabled: false,
                                        cycleWindowsEnabled: true,
-                                       unminimizedWindowCount: 1) == .passThrough,
+                                       cycleCandidateCount: 1) == .passThrough,
                "cycling alone never minimizes a single-window app")
         expect(DockClickSupport.action(appIsFrontmost: true,
                                        hasUnminimizedWindows: true,
@@ -9843,7 +9946,7 @@ struct MetricsTests {
                                        minimizeEnabled: false,
                                        hideEnabled: true,
                                        cycleWindowsEnabled: false,
-                                       unminimizedWindowCount: 3) == .hide,
+                                       cycleCandidateCount: 3) == .hide,
                "hiding treats a multi-window app as one app when cycling is off")
         expect(DockClickSupport.action(appIsFrontmost: true,
                                        hasUnminimizedWindows: true,
@@ -9853,7 +9956,7 @@ struct MetricsTests {
                                        minimizeEnabled: false,
                                        hideEnabled: true,
                                        cycleWindowsEnabled: true,
-                                       unminimizedWindowCount: 3) == .cycleWindows,
+                                       cycleCandidateCount: 3) == .cycleWindows,
                "window cycling stays ahead of hiding when several windows are available")
         expect(DockClickSupport.action(appIsFrontmost: true,
                                        hasUnminimizedWindows: false,
@@ -9862,7 +9965,7 @@ struct MetricsTests {
                                        hasModifiers: false,
                                        minimizeEnabled: false,
                                        cycleWindowsEnabled: true,
-                                       unminimizedWindowCount: 0) == .passThrough,
+                                       cycleCandidateCount: 0) == .passThrough,
                "cycling alone never restores minimized windows")
         expect(DockClickSupport.action(appIsFrontmost: false,
                                        hasUnminimizedWindows: true,
@@ -9871,8 +9974,44 @@ struct MetricsTests {
                                        hasModifiers: false,
                                        minimizeEnabled: false,
                                        cycleWindowsEnabled: true,
-                                       unminimizedWindowCount: 3) == .passThrough,
+                                       cycleCandidateCount: 3) == .passThrough,
                "cycling lets the Dock activate apps that are not frontmost")
+        // The two assertions above and below are what lets the service skip
+        // counting candidates unless the app is frontmost and has no
+        // fullscreen window: on those paths the ladder ignores the count, so
+        // paying for it inside the event tap buys nothing.
+        expect(DockClickSupport.action(appIsFrontmost: true,
+                                       hasUnminimizedWindows: true,
+                                       hasMinimizedWindows: false,
+                                       hasFullscreenWindows: true,
+                                       hasModifiers: false,
+                                       minimizeEnabled: true,
+                                       cycleWindowsEnabled: true,
+                                       cycleCandidateCount: 3) == .passThrough,
+               "cycling stays out of an app with a fullscreen window however many candidates there are")
+        // Issue #1204's report: one app, four unminimized windows spread over
+        // three desktops, two of them on the desktop being looked at. The AX
+        // window list holds all four; the window server's on-screen list holds
+        // only the two.
+        let windowsAcrossDesktops: [CGWindowID?] = [1, 2, 3, 4]
+        expect(DockClickSupport.cycleCandidateIndices(windowIDs: windowsAcrossDesktops,
+                                                      onScreenFrontToBack: [1, 2]) == [0, 1],
+               "cycling only considers the windows on the desktop being looked at")
+        expect(DockClickSupport.cycleCandidateIndices(windowIDs: windowsAcrossDesktops,
+                                                      onScreenFrontToBack: [1, 2]).last == 1,
+               "the click raises the rearmost window of the current desktop")
+        expect(DockClickSupport.cycleCandidateIndices(windowIDs: windowsAcrossDesktops,
+                                                      onScreenFrontToBack: [2, 1]).last == 0,
+               "the next click raises the other one back, rotating in place")
+        expect(DockClickSupport.cycleCandidateIndices(windowIDs: windowsAcrossDesktops,
+                                                      onScreenFrontToBack: [3]).count == 1,
+               "a desktop holding one window offers nothing to cycle, so the click cannot jump to another desktop")
+        expect(DockClickSupport.cycleCandidateIndices(windowIDs: [1, 2, 3],
+                                                      onScreenFrontToBack: [3, 1, 2]).last == 1,
+               "three windows on one desktop rotate through all of them, not just the front two")
+        expect(DockClickSupport.cycleCandidateIndices(windowIDs: [nil, nil],
+                                                      onScreenFrontToBack: [1, 2]).isEmpty,
+               "windows whose ids cannot be resolved are never guessed at")
         expect(DockClickSupport.repeatDecision(lastAction: .cycleWindows, elapsed: 0.5) == .deriveFromState,
                "a repeated click after a cycle keeps cycling from live state")
         expect(DockClickSupport.repeatDecision(lastAction: .hide, elapsed: 0.5) == .deriveFromState,
@@ -9972,6 +10111,52 @@ struct MetricsTests {
             encoding: .utf8)) ?? ""
         expect(dockPreviewSource.contains("DockClickSupport.dockOwnsPoint("),
                "Dock Preview does not open through fullscreen content covering the Dock")
+
+        // Both window server scans read the same list and must keep
+        // disagreeing where they disagree today. A point exactly on a
+        // window's far edge is inside for the click lookup and outside for
+        // the traffic lights, and a window whose app the traffic lights are
+        // told to leave alone ends that scan instead of handing the click to
+        // whatever sits behind it.
+        func windowServerEntry(_ frame: CGRect, pid: Int32, number: UInt32) -> [String: Any] {
+            [kCGWindowBounds as String: ["X": NSNumber(value: Double(frame.minX)),
+                                         "Y": NSNumber(value: Double(frame.minY)),
+                                         "Width": NSNumber(value: Double(frame.width)),
+                                         "Height": NSNumber(value: Double(frame.height))] as [String: Any],
+             kCGWindowLayer as String: NSNumber(value: 0),
+             kCGWindowAlpha as String: NSNumber(value: 1.0),
+             kCGWindowOwnerPID as String: NSNumber(value: pid),
+             kCGWindowNumber as String: NSNumber(value: number)]
+        }
+        let scannedWindow = CGRect(x: 0, y: 0, width: 200, height: 200)
+        let scannedNeighbour = CGRect(x: 200, y: 96, width: 200, height: 200)
+        let scannedEdgePoint = CGPoint(x: 200, y: 100)
+        let scannedNeighbours = [windowServerEntry(scannedWindow, pid: 1001, number: 11),
+                                 windowServerEntry(scannedNeighbour, pid: 1002, number: 12)]
+        expect(WindowServerSupport.bounds(from: scannedNeighbours[0]) == scannedWindow
+                && WindowServerSupport.bounds(from: [:]) == nil,
+               "a window's rectangle comes from its bounds entry and from nothing else")
+        expect(WindowServerSupport.windowCandidate(in: scannedNeighbours, at: scannedEdgePoint,
+                                                   ownProcessID: 501,
+                                                   pidIsEligible: { _ in true })?.pid == 1001,
+               "a click on a window's far edge still belongs to that window")
+        expect(WindowServerSupport.trafficLightCandidate(in: scannedNeighbours, at: scannedEdgePoint,
+                                                         button: .close,
+                                                         ownProcessID: 501,
+                                                         pidIsEligible: { _ in true })?.pid == 1002,
+               "a traffic light on a window's far edge belongs to the window that owns the pixel")
+        let scannedStack = [windowServerEntry(scannedWindow, pid: 1001, number: 11),
+                            windowServerEntry(scannedWindow, pid: 1002, number: 12)]
+        let scannedCloseButtonPoint = CGPoint(x: 20, y: 20)
+        expect(WindowServerSupport.trafficLightCandidate(in: scannedStack, at: scannedCloseButtonPoint,
+                                                         button: .close,
+                                                         ownProcessID: 501,
+                                                         pidIsEligible: { $0 != 1001 }) == nil,
+               "a traffic light click stops at the window in front, never reaching one behind it")
+        expect(WindowServerSupport.windowCandidate(in: scannedStack, at: scannedCloseButtonPoint,
+                                                   ownProcessID: 501,
+                                                   pidIsEligible: { $0 != 1001 })?.pid == 1002,
+               "the click lookup carries on behind a window it was told to leave alone")
 
         expect(MiddleClickSupport.actionForClick(fingerCount: 3, frameAge: 0.05, settledFor: 0.2,
                                                  sinceLastTransformEnd: nil,
@@ -10865,6 +11050,56 @@ struct MetricsTests {
                                                       commitWhenReady: false,
                                                       matchesShortcut: false) == .handleActiveSession,
                "App Switcher still routes repeated shortcuts and keys from a session that just became active")
+        let nativeSwitcherShortcuts: [SwitcherNativeSymbolicHotKey: GlobalShortcut] = [
+            .commandTab: .switcherDefault,
+            .commandShiftTab: GlobalShortcut(keyCode: Int64(kVK_Tab),
+                                             modifiers: [.command, .shift]),
+            .nextWindow: .switcherWindowDefault,
+            .previousWindow: GlobalShortcut(keyCode: Int64(kVK_ANSI_Grave),
+                                            modifiers: [.command, .shift]),
+        ]
+        expect(SwitcherSupport.nativeHotkeysToSuppress(
+                    takeOverSystemShortcuts: false,
+                    appsShortcut: .switcherDefault,
+                    windowShortcut: .switcherWindowDefault,
+                    nativeShortcuts: nativeSwitcherShortcuts).isEmpty,
+               "the App Switcher never changes macOS shortcuts without explicit opt-in")
+        expect(SwitcherSupport.nativeHotkeysToSuppress(
+                    takeOverSystemShortcuts: true,
+                    appsShortcut: .switcherDefault,
+                    windowShortcut: .switcherWindowDefault,
+                    nativeShortcuts: nativeSwitcherShortcuts)
+               == Set(SwitcherNativeSymbolicHotKey.allCases),
+               "opt-in covers both app and window switcher directions")
+        expect(SwitcherSupport.nativeHotkeysToSuppress(
+                    takeOverSystemShortcuts: true,
+                    appsShortcut: GlobalShortcut(keyCode: Int64(kVK_Tab), modifiers: [.option]),
+                    windowShortcut: GlobalShortcut(keyCode: Int64(kVK_ANSI_Grave), modifiers: [.option]),
+                    nativeShortcuts: nativeSwitcherShortcuts).isEmpty,
+               "non-colliding shortcuts leave the macOS switchers in place")
+        let remappedNativeShortcuts = nativeSwitcherShortcuts.mapValues {
+            GlobalShortcut(keyCode: $0.keyCode,
+                           modifiers: $0.modifiers.subtracting(.command).union(.option))
+        }
+        expect(SwitcherSupport.nativeHotkeysToSuppress(
+                    takeOverSystemShortcuts: true,
+                    appsShortcut: GlobalShortcut(keyCode: Int64(kVK_Tab), modifiers: [.option]),
+                    windowShortcut: GlobalShortcut(keyCode: Int64(kVK_ANSI_Grave), modifiers: [.option]),
+                    nativeShortcuts: remappedNativeShortcuts)
+               == Set(SwitcherNativeSymbolicHotKey.allCases),
+               "takeover follows the current macOS shortcut mappings instead of hardcoded keys")
+        expect(SwitcherSupport.nativeHotkeyTransition(
+                    from: [],
+                    to: Set(SwitcherNativeSymbolicHotKey.allCases),
+                    currentlyEnabled: [.commandTab])
+               == SwitcherNativeHotkeyTransition(suppress: [.commandTab], restore: [])
+               && SwitcherSupport.nativeHotkeyTransition(
+                    from: Set(SwitcherNativeSymbolicHotKey.allCases),
+                    to: [],
+                    currentlyEnabled: [])
+               == SwitcherNativeHotkeyTransition(suppress: [],
+                                                 restore: Set(SwitcherNativeSymbolicHotKey.allCases)),
+               "native takeover leaves pre-disabled keys alone and restores only owned keys")
         expect(SwitcherSupport.isCurrentActivationGeneration(12, current: 12)
                && !SwitcherSupport.isCurrentActivationGeneration(11, current: 12),
                "App Switcher ignores retries left by an older activation")
@@ -13283,12 +13518,15 @@ struct MetricsTests {
                    "count format keeps positional specifiers (\(language.rawValue))")
         }
         for language in AppLanguage.allCases {
-            let values = Mirror(reflecting: FeatureStrings.clipboard(language)).children
+            let clipboard = FeatureStrings.clipboard(language)
+            let values = Mirror(reflecting: clipboard).children
                 .compactMap { $0.value as? String }
             expect(values.count == 54 && values.allSatisfy { !$0.isEmpty },
                    "every clipboard string is set for \(language.rawValue)")
             expect(values.allSatisfy { !$0.contains("—") },
                    "no em-dash in visible clipboard strings (\(language.rawValue))")
+            expectFormat(clipboard.deleteSelectedFormat, ["d"],
+                         "\(language.rawValue) clipboard bulk-delete format")
         }
         for language in AppLanguage.allCases {
             let values = Mirror(reflecting: FeatureStrings.mouseButtons(language)).children
@@ -15208,6 +15446,9 @@ struct MetricsTests {
         expect(ScreenshotCapturePolicy.attachedCapturePlan(
             target: capturedWindow, frontToBack: [capturedWindow]) == nil,
                "a window with nothing stacked on it keeps the ordinary single-window capture")
+        let captureEngineSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/QuickTools/ScreenshotCaptureEngine.swift",
+            encoding: .utf8)) ?? ""
         // A sheet is often exactly as wide as the window it drops out of, so
         // the rule has to take one that matches an edge rather than shrink from
         // it.
@@ -15226,6 +15467,52 @@ struct MetricsTests {
         expect(ScreenshotCapturePolicy.attachedCapturePlan(
             target: capturedWindow, frontToBack: [sheet]) == nil,
                "a window missing from the list does not treat everything as stacked on it")
+        expect(captureEngineSource.contains("$0.frame.intersects(plan.bounds)")
+                && captureEngineSource.contains("hits.count == 1")
+                && !captureEngineSource.contains(".contains(plan.bounds)"),
+               "a window straddling two displays falls back to the single-window capture instead of a one-display slice")
+
+        let geometricAttachment = ScreenshotCapturePolicy.AttachedCapturePlan(
+            windowIDs: [1, 6, 2], bounds: capturedWindow.frame)
+        expect(ScreenshotCapturePolicy.confirmedAttachment(
+            geometricAttachment, confirmedIDs: nil) == geometricAttachment,
+               "missing Accessibility confirmation leaves the geometric attachment unchanged")
+        expect(ScreenshotCapturePolicy.confirmedAttachment(
+            geometricAttachment, confirmedIDs: [2])
+            == ScreenshotCapturePolicy.AttachedCapturePlan(
+                windowIDs: [1, 2], bounds: capturedWindow.frame),
+               "Accessibility confirmation keeps its matching attachment in capture order")
+        expect(ScreenshotCapturePolicy.confirmedAttachment(
+            geometricAttachment, confirmedIDs: []) == nil,
+               "Accessibility confirmation with no matching attachment drops the composite plan")
+
+        // The engine is outside the pure-helper test binary. Pin the permission
+        // gate before its AX call so window capture never starts an
+        // Accessibility round trip merely because geometry found a candidate.
+        let screenshotCaptureEngineSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/QuickTools/ScreenshotCaptureEngine.swift",
+            encoding: .utf8)) ?? ""
+        let captureWindowBody = (screenshotCaptureEngineSource
+            .components(separatedBy: "static func captureWindow(").last ?? "")
+            .components(separatedBy: "\n    /// On-screen windows").first ?? ""
+        let accessibilityGate = captureWindowBody.range(of: "if Permissions.shared.accessibility {")
+        let attachmentConfirmation = captureWindowBody.range(
+            of: "accessibilityAttachedWindowIDs(")
+        expect(accessibilityGate != nil && attachmentConfirmation != nil
+               && accessibilityGate!.lowerBound < attachmentConfirmation!.lowerBound,
+               "window capture checks its existing Accessibility grant before AX confirmation")
+        let accessibilityAttachedWindowIDsBody = (screenshotCaptureEngineSource
+            .components(separatedBy: "private static func accessibilityAttachedWindowIDs(").last ?? "")
+            .components(separatedBy: "\n    private static func accessibilityElements(").first ?? ""
+        let accessibilityAttachedWindowIDsCode = accessibilityAttachedWindowIDsBody
+            .components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        let unresolvedCandidatePasses = accessibilityAttachedWindowIDsCode.range(of: "guard let element = elementsByID[candidateID] else {\n                confirmed.insert(candidateID)\n                continue\n            }")
+        let standardWindowFails = accessibilityAttachedWindowIDsCode.range(of: "if let subrole = accessibilityString(element, kAXSubroleAttribute as CFString),\n               subrole == (kAXStandardWindowSubrole as String) || subrole == \"AXFullScreenWindow\" {\n                continue\n            }\n            confirmed.insert(candidateID)")
+        let childrenPassIsAbsent = !accessibilityAttachedWindowIDsCode.contains("kAXChildrenAttribute")
+        expect(unresolvedCandidatePasses != nil && standardWindowFails != nil && childrenPassIsAbsent,
+               "AX keeps unresolved candidates and excludes only identified standard windows")
 
         expect(ScreenshotSupport.sanitizedDelay(5) == 5
                 && ScreenshotSupport.sanitizedDelay(7) == 0
@@ -15710,7 +15997,7 @@ struct MetricsTests {
             contentsOfFile: "Sources/Vorssaint/Services/QuickTools/ScreenshotSelectionController.swift",
             encoding: .utf8)) ?? ""
         expect(captureSelectionSource.contains(
-            "override func mouseExited(with event: NSEvent) {\n        refreshGuideVisibility()"),
+            "override func mouseExited(with event: NSEvent) {\n        refreshPointerState()\n        refreshGuideVisibility()"),
                "system chrome cannot hide the capture chooser while the pointer remains on its display")
         expect(captureSelectionSource.contains(
             "let height: CGFloat = screenCaptureOptions != nil\n            ? 146\n            : 72")
@@ -15718,13 +16005,19 @@ struct MetricsTests {
                     ".opacity(options.selectedTool == .recording ? 1 : 0)"),
                "capture modes reserve the recording controls' height so the chooser never jumps")
         expect(captureSelectionSource.contains("screenCaptureToolDidChange()")
+                && captureSelectionSource.contains("nextPolicy != capturePolicy")
                 && captureSelectionSource.contains("screenCaptureOptions?.onSelectionChange ="),
-               "capture mode changes update the active overlay session in place without tearing down windows")
+               "capture mode changes stay in place only while their source policy is unchanged")
+        expect(captureSelectionSource.contains("private var pointerIsInside = false")
+                && !captureSelectionSource.contains("|| bounds.contains(hoverPoint)"),
+               "the capture loupe draws on only the display that owns the current pointer")
         let captureServiceSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/QuickTools/ScreenCaptureService.swift",
             encoding: .utf8)) ?? ""
-        expect(!captureServiceSource.contains("replaceSelection"),
-               "the capture service does not cancel and recreate selection controllers when changing modes")
+        expect(captureServiceSource.contains("replaceSelection(options:")
+                && captureServiceSource.contains("selection = nil")
+                && captureServiceSource.contains("controller.cancel()"),
+               "the capture service rebuilds when freeze, pointer or window policy changes")
         // The preview appears unasked for, so presenting it must not take the
         // keyboard away from whatever the person is typing into. Its shortcuts
         // read a local monitor, which is delivered nothing until the panel is
@@ -20983,6 +21276,37 @@ struct MetricsTests {
                 && CommandBarRowShortcuts.hasRoom(for: "row.0", in: full)
                 && CommandBarRowShortcuts.hasRoom(for: "row.new", in: [:]),
                "a full list says so before the keys are taken, and rebinding is always allowed")
+        expect(CommandBarRowShortcuts.isUsable(
+                    GlobalShortcut(keyCode: Int64(kVK_ANSI_Q), modifiers: [.command])),
+               "Command Q is a real combination; the card has to be able to store it")
+        let commandBarSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/CommandBar/CommandBarService.swift",
+            encoding: .utf8)) ?? ""
+        let commandBarCode = commandBarSource
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        // Ends on the next declaration rather than naming a neighbour: a
+        // rename would find no separator, leave the slice running to end of
+        // file, and quietly restore the whole-file search.
+        let captureBeginParts = (commandBarCode
+            .components(separatedBy: "private func beginCapturingShortcut(")
+            .last ?? "").components(separatedBy: "\n    private func ")
+        let captureBegin = captureBeginParts.first ?? ""
+        expect(captureBeginParts.count > 1,
+               "the Command Bar capture start finds the end of beginCapturingShortcut")
+        expect(captureBegin.contains("ShortcutCapture.begin()")
+                && captureBegin.contains("ShortcutRecordingTap.begin"),
+               "the capture card starts the same pair Settings uses, so Command Q reaches it")
+        let captureEndParts = (commandBarCode
+            .components(separatedBy: "private func endCapturingShortcut()")
+            .last ?? "").components(separatedBy: "\n    private func ")
+        let captureEnd = captureEndParts.first ?? ""
+        expect(captureEndParts.count > 1,
+               "the Command Bar capture stop finds the end of endCapturingShortcut")
+        expect(captureEnd.contains("ShortcutRecordingTap.end()")
+                && captureEnd.contains("ShortcutCapture.end()"),
+               "leaving the card gives the keyboard back")
 
         // Dates and places, answered by the calendar this Mac carries.
         var gregorian = Calendar(identifier: .gregorian)
@@ -21395,6 +21719,8 @@ struct MetricsTests {
             .enumerated().filter { $0.offset % 2 == 1 }.map(\.element)
             .filter { $0.hasSuffix(".") }
         expect(!sweptNamespaces.isEmpty, "the swept namespaces read back out of build.sh")
+        expect(sweepBody.contains("rm -f \"$preferences\"/$name*.plist(N)"),
+               "the defaults preference sweep tolerates an already-empty namespace")
         // Split so this needle is not itself a match in the text it scans.
         let suiteCall = "UserDefaults(suiteName" + ": "
         let suiteArguments = testSource.components(separatedBy: suiteCall)
@@ -21496,11 +21822,17 @@ struct MetricsTests {
         expect(sessionActivitySource.contains("sessionDidResignActiveNotification")
                 && sessionActivitySource.contains("sessionDidBecomeActiveNotification"),
                "the session watcher follows both halves of a fast user switch")
+        let mouseAccelerationSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/MouseAcceleration/MouseAccelerationService.swift",
+            encoding: .utf8)) ?? ""
+        expect(mouseAccelerationSource.contains("SessionActivitySupport.isOnConsole("),
+               "mouse acceleration shares the safe initial session-state fallback")
         for tapOwner in ["Sources/Vorssaint/Services/ScrollInverter.swift",
                          "Sources/Vorssaint/Services/SmoothScrollService.swift",
                          "Sources/Vorssaint/Services/MouseNavigation/MouseNavigationService.swift",
                          "Sources/Vorssaint/Services/MouseButtons/MouseButtonShortcutService.swift",
-                         "Sources/Vorssaint/Services/MiddleClick/MiddleClickService.swift"] {
+                         "Sources/Vorssaint/Services/MiddleClick/MiddleClickService.swift",
+                         "Sources/Vorssaint/Services/QuitProtection/QuitProtectionService.swift"] {
             let source = (try? String(contentsOfFile: tapOwner, encoding: .utf8)) ?? ""
             expect(!source.isEmpty, "\(tapOwner) reads back for its session-switch check")
             let code = source.components(separatedBy: "\n")
@@ -21514,7 +21846,8 @@ struct MetricsTests {
                    "\(tapOwner) does not re-arm a disabled tap into a switched-away session")
             if tapOwner.contains("MouseNavigation")
                 || tapOwner.contains("MouseButtonShortcut")
-                || tapOwner.contains("MiddleClick") {
+                || tapOwner.contains("MiddleClick")
+                || tapOwner.contains("QuitProtection") {
                 expect(code.contains("AXIsProcessTrusted()"),
                        "\(tapOwner) does not keep a modifying tap alive after Accessibility is lost")
             }
@@ -21528,12 +21861,26 @@ struct MetricsTests {
             encoding: .utf8)) ?? ""
         expect(mouseTapAppDelegateSource.contains("MouseButtonShortcutService.shared.suspend()"),
                "normal termination releases mouse-button tap state instead of waiting for a future Up")
+        let accessibilitySink = mouseTapAppDelegateSource
+            .components(separatedBy: "Permissions.shared.$accessibility")
+            .dropFirst().first?.components(separatedBy: "Permissions.shared.$screenRecording").first ?? ""
+        expect(accessibilitySink.contains(".quitWindowProtection"),
+               "granting Accessibility starts quit protection without a relaunch")
         let smoothSchedulerSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/SmoothScrollService.swift",
             encoding: .utf8)) ?? ""
         let smoothSchedulerCode = smoothSchedulerSource.components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
+        let inverterRetrySource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/ScrollInverter.swift",
+            encoding: .utf8)) ?? ""
+        for (name, source) in [("scroll inverter", inverterRetrySource),
+                               ("smooth scroll", smoothSchedulerCode)] {
+            expect(source.contains("guard !tapCreationRetryUsed")
+                    && source.contains("tapCreationRetryWork?.cancel()"),
+                   "\(name) retries tap creation once instead of polling forever")
+        }
         // Mos-like path: CoreVideo DisplayLink on the scroll thread, with a
         // 60 Hz timer fallback when no display link can be created. Main's
         // CADisplayLink/NSScreen cadence was replaced by this model in #1040.
@@ -21596,8 +21943,12 @@ struct MetricsTests {
         expect(!selfUninstallSource.contains("_ = Sudoers.pmsetDisableSleep")
                 && !uninstallerSource.contains("_ = Sudoers.pmsetDisableSleep"),
                "neither uninstall path discards the result of restoring sleep")
-        expect(selfUninstallSource.contains("adminPromptRecover"),
-               "in-app uninstall escalates a failed sleep restore to the password prompt")
+        expect(selfUninstallSource.contains("guard detachFromSystem() else")
+                && selfUninstallSource.contains("restoreSleepBeforeRemoval() -> Bool")
+                && selfUninstallSource.contains("guard FanControlService.restoreAndUnregisterForRemoval() else")
+                && selfUninstallSource.contains("adminPromptRecover")
+                && selfUninstallSource.contains("verification.status == 0"),
+               "in-app uninstall aborts unless fans and normal sleep are restored before removal")
         expect(uninstallScriptSource.contains("SleepDisabled"),
                "script uninstall reads the sleep setting back for itself")
 
@@ -21616,10 +21967,25 @@ struct MetricsTests {
                "quit protection clamps a too-short hold duration")
         expect(QuitProtectionSupport.sanitizedHoldDuration(3_000) == 2_000,
                "quit protection clamps an overly long hold duration")
+        expect(QuitProtectionSupport.sanitizedHoldDuration(.nan)
+                == QuitProtectionSupport.defaultHoldDurationMilliseconds
+                && QuitProtectionSupport.sanitizedHoldDuration(.infinity)
+                    == QuitProtectionSupport.defaultHoldDurationMilliseconds,
+               "quit protection replaces non-finite hold durations with its default")
         expect(QuitProtectionSupport.sanitizedDoublePressInterval(100) == 200,
                "quit protection clamps a too-short double-press interval")
         expect(QuitProtectionSupport.sanitizedDoublePressInterval(3_000) == 1_500,
                "quit protection clamps an overly long double-press interval")
+        expect(QuitProtectionSupport.sanitizedDoublePressInterval(.nan)
+                == QuitProtectionSupport.defaultDoublePressIntervalMilliseconds
+                && QuitProtectionSupport.sanitizedDoublePressInterval(-.infinity)
+                    == QuitProtectionSupport.defaultDoublePressIntervalMilliseconds,
+               "quit protection replaces non-finite double-press intervals with its default")
+        expect(!SettingsBackupSupport.valueLooksRight(
+                    DefaultsKey.quitProtectionQuitDoubleIntervalMs, Double.nan)
+                && !SettingsBackupSupport.valueLooksRight(
+                    DefaultsKey.quitProtectionQuitDoubleIntervalMs, Double.infinity),
+               "settings backups reject non-finite numeric preferences")
         expect(QuitProtectionSupport.isWithinDoublePressInterval(
             firstTimestamp: 1_000_000_000,
             secondTimestamp: 2_500_000_000,
@@ -21707,12 +22073,19 @@ struct MetricsTests {
                "quit and close protection settings are included in portable backup")
 
         for language in AppLanguage.allCases {
-            let quitProtectionValues = Mirror(reflecting: FeatureStrings.quitProtection(language)).children
+            let quitProtection = FeatureStrings.quitProtection(language)
+            let quitProtectionValues = Mirror(reflecting: quitProtection).children
                 .compactMap { $0.value as? String }
-            expect(quitProtectionValues.count == 26 && quitProtectionValues.allSatisfy { !$0.isEmpty },
+            expect(quitProtectionValues.count == 29 && quitProtectionValues.allSatisfy { !$0.isEmpty },
                    "every quit protection string is set for \(language.rawValue)")
             expect(quitProtectionValues.allSatisfy { !$0.contains("—") },
                    "no em-dash in quit protection strings (\(language.rawValue))")
+            expectFormat(quitProtection.holdHUDFormat, ["@"],
+                         "\(language.rawValue) quit protection hold HUD format")
+            expectFormat(quitProtection.doubleHUDFormat, ["@"],
+                         "\(language.rawValue) quit protection double HUD format")
+            expectFormat(quitProtection.extraHUDFormat, ["@"],
+                         "\(language.rawValue) quit protection modifier HUD format")
         }
 
         if failures.isEmpty {

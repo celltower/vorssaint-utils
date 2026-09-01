@@ -57,6 +57,8 @@ final class SmoothScrollService: ObservableObject {
     private var tapTimeoutCount = 0
     private var tapTimeoutWindowStart: TimeInterval = 0
     private var sleepObserver: NSObjectProtocol?
+    private var tapCreationRetryUsed = false
+    private var tapCreationRetryWork: DispatchWorkItem?
     private static let ownProcessID = Int64(getpid())
     private static let maxTapTimeoutsPerWindow = 3
     private static let tapTimeoutWindow: TimeInterval = 60
@@ -152,6 +154,9 @@ final class SmoothScrollService: ObservableObject {
     }
 
     private func stop() {
+        tapCreationRetryWork?.cancel()
+        tapCreationRetryWork = nil
+        tapCreationRetryUsed = false
         stopGlideLocked()
         let snapshot = lifecycleLock.withLock {
             () -> (runLoop: CFRunLoop?, tap: CFMachPort?, threadExists: Bool, generation: UInt) in
@@ -224,13 +229,15 @@ final class SmoothScrollService: ObservableObject {
                     MouseAppExceptions.shared.setSourceTracking(false, for: .smoothScroll)
                 }
                 publishRunning(false, generation: generation)
-                // A create that fails during the session handoff gets one more look once the switch settles.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    self?.syncWithPreferences()
+                DispatchQueue.main.async { [weak self] in
+                    self?.scheduleTapCreationRetry()
                 }
                 return
             }
 
+            tapCreationRetryUsed = false
+            tapCreationRetryWork?.cancel()
+            tapCreationRetryWork = nil
             let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             lifecycleLock.withLock {
                 self.tap = tap
@@ -273,6 +280,19 @@ final class SmoothScrollService: ObservableObject {
             pendingStartAfterStop = false
             return shouldRestart
         }
+    }
+
+    private func scheduleTapCreationRetry() {
+        // A create that fails during the session handoff gets one more look once the switch settles.
+        guard !tapCreationRetryUsed else { return }
+        tapCreationRetryUsed = true
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.tapCreationRetryWork = nil
+            self.syncWithPreferences()
+        }
+        tapCreationRetryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     private func publishRunning(_ running: Bool, generation: UInt) {

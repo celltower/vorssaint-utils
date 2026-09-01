@@ -260,7 +260,7 @@ final class MouseAppExceptions: ObservableObject {
         if let cached { return cached }
 
         let window = MouseAppExceptionSupport.pointerWindow(
-            in: Self.onScreenWindows(),
+            in: WindowServerSupport.onScreenWindows(),
             at: point,
             ownProcessID: Self.ownProcessID)
         // LaunchServices / workspace work stays outside `lock` so other taps
@@ -292,16 +292,5 @@ final class MouseAppExceptions: ObservableObject {
         cachedIdentity = nil
         cachedRegion = nil
         cachedAt = -1
-    }
-
-    /// The on-screen windows, front to back, without the desktop and its
-    /// icons: scrolling the empty desktop must fall through to the app in
-    /// front rather than answer with the file manager behind everything.
-    private static func onScreenWindows() -> [MouseAppExceptionSupport.Window] {
-        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
-                                                    kCGNullWindowID) as? [[String: Any]] else {
-            return []
-        }
-        return MouseAppExceptionSupport.windows(from: list)
     }
 }

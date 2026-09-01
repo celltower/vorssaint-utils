@@ -102,7 +102,7 @@ enum MouseAppExceptionSupport {
                 && window.processID != ownProcessID
                 && window.frame.contains(point)
         }
-        }
+    }
 
     /// Whether the previous answer still applies. A window answers while the
     /// pointer stays inside it; "no window here" only applies while the
