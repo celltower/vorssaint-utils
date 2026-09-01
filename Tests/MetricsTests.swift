@@ -20879,6 +20879,40 @@ struct MetricsTests {
         expect(RecorderMotion.ringProgress(at: 2.0, clicks: clicks) == nil,
                "the ring is gone well before the next second")
 
+        // The typing sampler fills an array from an NSEvent monitor callback
+        // while the stop path reads it, so the append has to be under the
+        // lock: an unsynchronised one races the copy-on-write buffer. The
+        // recording's start time is written by `start()` and read from that
+        // same callback, so it belongs under the lock too.
+        let typingSampler = ((try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/Recorder/RecorderTypingTrack.swift",
+            encoding: .utf8)) ?? "")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        expect(typingSampler.contains("let lock = NSLock()"),
+               "the typing sampler guards its buffer the way the pointer sampler does")
+        expect(typingSampler.contains("lock.withLock { startedAt = CACurrentMediaTime() }"),
+               "the typing sampler writes the recording's start time under the lock")
+        expect(typingSampler.contains(
+            "lock.withLock { guard let time = pauseClock.eventTime(now, since: startedAt) "
+            + "else { return } times.append(time) }"
+        ), "the typing sampler appends a keystroke time only under the lock")
+        // `RecorderSession.stop()` is nonisolated and async, so its body runs
+        // off the main thread however main-actor the caller was (SE-0338).
+        // Both samplers install and remove AppKit event monitors, so they are
+        // started and stopped back on the main thread.
+        let recorderSessionShape = ((try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/Recorder/ScreenRecorderService.swift",
+            encoding: .utf8)) ?? "")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        expect(recorderSessionShape.contains(
+            "await MainActor.run { pointer.start() typing.start() }"
+        ), "the recorder installs its event monitors on the main thread")
+        expect(recorderSessionShape.contains(
+            "await MainActor.run { (pointer.stop(), typing.stop()) }"
+        ), "the recorder removes its event monitors on the main thread")
+
         let uniform = RecorderMotion.resampled(
             [RecorderMotion.Sample(time: 0, point: CGPoint(x: 0, y: 0)),
              RecorderMotion.Sample(time: 1, point: CGPoint(x: 1, y: 1))],
