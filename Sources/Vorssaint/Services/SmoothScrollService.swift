@@ -124,6 +124,7 @@ final class SmoothScrollService: ObservableObject {
 
     private func start() {
         refreshPreferences()
+        installSleepObserver()
         let startState = lifecycleLock.withLock {
             () -> (thread: Thread?, publishRunning: Bool, generation: UInt) in
             if tapThread != nil {
@@ -157,6 +158,7 @@ final class SmoothScrollService: ObservableObject {
         tapCreationRetryWork?.cancel()
         tapCreationRetryWork = nil
         tapCreationRetryUsed = false
+        removeSleepObserver()
         stopGlideLocked()
         let snapshot = lifecycleLock.withLock {
             () -> (runLoop: CFRunLoop?, tap: CFMachPort?, threadExists: Bool, generation: UInt) in
@@ -487,6 +489,13 @@ final class SmoothScrollService: ObservableObject {
         ) { [weak self] _ in
             self?.dropGlideForSleep()
         }
+    }
+
+    private func removeSleepObserver() {
+        if let sleepObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver)
+        }
+        sleepObserver = nil
     }
 
     private func dropGlideForSleep() {

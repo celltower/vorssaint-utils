@@ -18606,12 +18606,12 @@ struct MetricsTests {
         expect(!smoothScrollSource.contains("pointerResolution:")
                 && !scrollInverterSource.contains("pointerResolution:"),
                "wheel taps no longer opt into asynchronous pointer resolution")
-        let shortcutSource = (try? String(
+        let mouseButtonShortcutSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/MouseButtons/MouseButtonShortcutService.swift",
             encoding: .utf8)) ?? ""
-        expect(shortcutSource.contains("excludesActionTarget("),
+        expect(mouseButtonShortcutSource.contains("excludesActionTarget("),
                "side-wheel preflight uses the same synchronous action check as its handler")
-        let handleSideWheelSource = shortcutSource
+        let handleSideWheelSource = mouseButtonShortcutSource
             .components(separatedBy: "private func handleSideWheel")
             .dropFirst()
             .first ?? ""
@@ -21907,6 +21907,12 @@ struct MetricsTests {
             // the window server waits on; teardown must invalidate the port.
             expect(code.contains("CFMachPortInvalidate"),
                    "\(tapOwner) hands its tap back rather than only disabling it")
+            if tapOwner.contains("ScrollInverter") || tapOwner.contains("SmoothScroll") {
+                expect(code.contains("CFRunLoopStop")
+                        && code.contains("clearEventTapThread")
+                        && code.contains("tapThread = nil"),
+                       "\(tapOwner) tears down its dedicated run-loop thread")
+            }
         }
 
         // Disabling a tap and dropping the last Swift reference does not hand
@@ -21971,17 +21977,21 @@ struct MetricsTests {
                    "\(name) retries tap creation once instead of polling forever")
         }
         // Mos-like path: CoreVideo DisplayLink on the scroll thread, with a
-        // 60 Hz timer fallback when no display link can be created. Main's
-        // CADisplayLink/NSScreen cadence was replaced by this model in #1040.
+        // 60 Hz timer fallback when no display link can be created. Dropped
+        // from main's CADisplayLink asserts (no longer present on this path):
+        // screen.displayLink(, displayLink.add(to: .main, forMode: .common),
+        // sender.timestamp, sender.duration, displayLink?.invalidate(),
+        // removeScreenObserver() — the NSScreen-linked scheduler is gone.
         expect(smoothSchedulerCode.contains("CVDisplayLinkCreateWithActiveCGDisplays")
                 && smoothSchedulerCode.contains("CVDisplayLinkStart")
                 && smoothSchedulerCode.contains("displayLinkControlQueue")
                 && smoothSchedulerCode.contains("Timer(timeInterval: SmoothScrollSupport.frameInterval"),
                "smooth scrolling follows the active display's native cadence and elapsed frame time")
         expect(smoothSchedulerCode.contains("stopDisplayLink(")
+                && smoothSchedulerCode.contains("CVDisplayLinkStop")
                 && smoothSchedulerCode.contains("frameTimer?.invalidate()")
-                && smoothSchedulerCode.contains("CVDisplayLinkStop"),
-               "smooth scrolling releases either scheduler and its lifecycle observers on stop")
+                && smoothSchedulerCode.contains("removeSleepObserver()"),
+               "smooth scrolling releases either scheduler and its sleep observer on stop")
         expect(smoothSchedulerCode.contains("startDisplayLink(generation:")
                 && smoothSchedulerCode.contains("frameTimer = timer"),
                "smooth scrolling follows display changes and keeps a no-screen timer fallback")
