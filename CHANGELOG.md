@@ -48,7 +48,7 @@ Vorssaint adds quit and close protections, expands screen text recognition, capt
 - The Command Bar capture card now records Command Q instead of ignoring it. Thanks to @arsarsars1 and @jtprogru.
 - Volume Mixer now attributes helper audio processes whose system responsibility report is detached to their parent app, ensuring browsers and sandboxed communication apps are controllable.
 - Quit on close now captures windows created asynchronously after launch or on activation, ensuring apps that load their windows after process startup are quit when their last window is closed.
-- Shortcut fields and key displays now follow the active keyboard layout, including Command-specific mappings, so they show the keys actually pressed. Thanks to @PathGao.
+- Shortcut fields and key displays now follow the active keyboard layout, resolve physical keycaps under input methods and support Command-specific mappings, so they show the keys actually pressed. Thanks to @PathGao.
 - The Uninstaller and Cleaner leftover scans now accept two-component bundle identifiers, allowing apps with two-part domain names to be selected and cleaned.
 - The permission guide card now offers a start-over option when an entry left by an earlier app build is stuck on in System Settings, and adds a relaunch button once Screen Recording is granted. Thanks to @andreisuslov.
 - Uninstallation now verifies that sleep was restored and asks for admin authorization if the passwordless restore fails, preventing closed-lid sleep prevention from remaining permanently disabled on the Mac. Thanks to @mugurc.
