@@ -4815,6 +4815,47 @@ struct MetricsTests {
                && UninstallerSupport.fileIdentity(at: safeFile) != originalFileIdentity,
                "removal stays inside its scan root, rejects symlink escapes and detects path replacement")
         try? FileManager.default.removeItem(at: safetyFixture)
+        func sourceBody(of source: String, from opening: String, to closing: String) -> String {
+            guard let start = source.range(of: opening),
+                  let end = source.range(of: closing, range: start.upperBound..<source.endIndex)
+            else { return "" }
+            return String(source[start.upperBound..<end.lowerBound])
+        }
+        // Building the installed-apps oracle walks the application folders, and
+        // the removal guard reads it under `.leftovers` alone — with leftover
+        // rows unchecked by default, the common clean must not pay for that
+        // walk. JunkCleaner is not part of this test binary, so pin the gate
+        // and the premise that makes an empty oracle safe at their source.
+        let junkCleanerSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/Cleaner/JunkCleaner.swift",
+            encoding: .utf8)) ?? ""
+        let cleanSelectedBody = sourceBody(of: junkCleanerSource, from: "func cleanSelected()",
+                                           to: "private static func mayRemove")
+        expect(cleanSelectedBody.contains("chosen.contains { $0.category == .leftovers }")
+               && cleanSelectedBody.contains("? Self.installedBundleIDs() : []")
+               && !cleanSelectedBody.contains("let installed = Self.installedBundleIDs()"),
+               "a clean builds the installed-apps oracle only when a leftover row is selected")
+        let mayRemoveBody = sourceBody(of: junkCleanerSource, from: "private static func mayRemove",
+                                       to: "private static func trashViaFinder")
+        let leftoverBranch = mayRemoveBody.range(of: "if item.category == .leftovers")
+        expect(mayRemoveBody.components(separatedBy: "installed: installed").count == 2,
+               "the removal guard consults the installed-apps oracle exactly once")
+        expect(leftoverBranch.map { branch in
+                   mayRemoveBody.range(of: "installed: installed",
+                                       range: branch.upperBound..<mayRemoveBody.endIndex) != nil
+               } == true,
+               "the removal guard reads the installed-apps oracle inside its leftovers branch")
+        // The known-application roster opens every installed app, and only the
+        // shared-data claims read it. AppUninstaller is not part of this test
+        // binary either, so pin the gate that keeps a removal that cannot claim
+        // shared data from paying for the roster.
+        let appUninstallerSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/Uninstall/AppUninstaller.swift",
+            encoding: .utf8)) ?? ""
+        let removeSelectedBody = sourceBody(of: appUninstallerSource, from: "func removeSelected()",
+                                            to: "func removeSelectedWithHomebrew()")
+        expect(removeSelectedBody.contains("let knownApplications = mayClaimSharedData"),
+               "a removal builds the known-application roster only when it may claim shared data")
         expect(CleanerSupport.bundleIDCandidate(fromEntryName: "com.vendor.editor.prefPane")
                 == "com.vendor.editor",
                "preference panes map to their owning bundle identifier")
