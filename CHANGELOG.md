@@ -54,6 +54,8 @@ Vorssaint adds quit and close protections, expands screen text recognition, capt
 - The radial menu now checks only which extra mouse button opens a wheel when a side button is pressed, instead of loading every wheel and its icons on each event, so holding a side button and moving the mouse no longer risks dropped clicks. Thanks to @PathGao.
 
 ### Fixed
+- Restoring screen gamma before switching off a display now verifies the display's identity, preventing a dimmed curve from applying to another monitor after reconnections. Thanks to @PathGao.
+- The radial menu now releases its mouse button tap when switching macOS user accounts and closes any open wheel, preventing extra button clicks from stalling in the other account. Thanks to @PathGao.
 - Paste as plain text no longer freezes the app when the app you copied from is slow to hand over the copied content. Thanks to @PathGao.
 - The App Switcher, a Dock icon restore and the process list now bring the chosen app to the front instead of raising its windows behind the app you were using. Thanks to @pboucher and @PathGao.
 - The Homebrew panel now refreshes installed packages after a run that only partly finished, so one skipped package no longer leaves the versions and pending updates showing the state from before it. Thanks to @PathGao.
