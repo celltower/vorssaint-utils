@@ -37,7 +37,7 @@
 </p>
 
 <p align="center">
-  For partnerships or anything private, email
+  For anything private, email
   <a href="mailto:hello@vorssaint.com"><strong>hello@vorssaint.com</strong></a>.
 </p>
 
