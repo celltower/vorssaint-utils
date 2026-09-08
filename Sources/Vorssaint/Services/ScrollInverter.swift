@@ -20,9 +20,9 @@ import CoreGraphics
 /// tap flips first and the later smooth-scroll tap coasts those final deltas
 /// without inverting them again.
 ///
-/// Tap callbacks run on a dedicated thread with an immutable preference
-/// snapshot, matching Smooth Scroll so Settings layout never shares a run
-/// loop with wheel inversion.
+/// The tap is served by `PointerTapRunLoop` so ordinary wheel events never wait
+/// on the main run loop. Axis preferences are snapshotted under a lock so the
+/// callback never reads UserDefaults.
 final class ScrollInverter: ObservableObject {
     static let shared = ScrollInverter()
 
@@ -33,21 +33,19 @@ final class ScrollInverter: ObservableObject {
     private static let maxTapTimeoutsPerWindow = 3
     private static let tapTimeoutWindow: TimeInterval = 60
 
-    private let lifecycleLock = NSLock()
-    private let configLock = NSLock()
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var tapRunLoop: CFRunLoop?
-    private var tapThread: Thread?
-    private var shouldStopTapThread = false
-    private var pendingStartAfterStop = false
-    private var lifecycleGeneration: UInt = 0
+    /// Guards the two above: the callback runs on the pointer thread while the
+    /// main thread arms and tears the tap down.
+    private let tapStateLock = NSLock()
+    private let configLock = NSLock()
     private var invertVertical = false
     private var invertHorizontal = false
     private var tapTimeoutCount = 0
     private var tapTimeoutWindowStart: TimeInterval = 0
     /// Timestamp (ns, event clock) of the last event carrying a gesture phase —
-    /// only touch devices emit those. Read/written solely on the tap callback.
+    /// only touch devices emit those. Read/written solely on the tap callback,
+    /// which is the pointer thread and nothing else.
     private var lastGesturePhaseTimestamp: UInt64?
     private var tapCreationRetryUsed = false
     private var tapCreationRetryWork: DispatchWorkItem?
@@ -97,34 +95,46 @@ final class ScrollInverter: ObservableObject {
 
     private func start() {
         refreshPreferences()
+        if let port = tapStateLock.withLock({ tap }) {
+            CGEvent.tapEnable(tap: port, enable: true)
+            MouseAppExceptions.shared.setSourceTracking(true, for: .scrollDirection)
+            isRunning = true
+            return
+        }
         MouseAppExceptions.shared.setSourceTracking(true, for: .scrollDirection)
-        let startState = lifecycleLock.withLock {
-            () -> (thread: Thread?, publishRunning: Bool, generation: UInt) in
-            if tapThread != nil {
-                if shouldStopTapThread {
-                    pendingStartAfterStop = true
-                    return (nil, false, lifecycleGeneration)
-                }
-                return (nil, true, lifecycleGeneration)
-            }
-            shouldStopTapThread = false
-            pendingStartAfterStop = false
-            lifecycleGeneration &+= 1
-            let generation = lifecycleGeneration
-            let thread = Thread { [weak self] in
-                self?.runEventTap(generation: generation)
-            }
-            thread.name = "Vorssaint Scroll Inverter"
-            thread.qualityOfService = .userInteractive
-            tapThread = thread
-            return (thread, false, generation)
+        guard let tap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .tailAppendEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(1 << CGEventType.scrollWheel.rawValue),
+            callback: { _, type, event, userInfo in
+                guard let userInfo else { return Unmanaged.passUnretained(event) }
+                let inverter = Unmanaged<ScrollInverter>.fromOpaque(userInfo).takeUnretainedValue()
+                return inverter.handle(type: type, event: event)
+            },
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else {
+            MouseAppExceptions.shared.setSourceTracking(false, for: .scrollDirection)
+            isRunning = false
+            scheduleTapCreationRetry()
+            return
         }
 
-        if let thread = startState.thread {
-            thread.start()
-        } else if startState.publishRunning {
-            publishRunning(true, generation: startState.generation)
+        tapCreationRetryUsed = false
+        tapCreationRetryWork?.cancel()
+        tapCreationRetryWork = nil
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        tapStateLock.withLock {
+            self.tap = tap
+            runLoopSource = source
+            tapTimeoutCount = 0
+            tapTimeoutWindowStart = 0
         }
+        if let source {
+            PointerTapRunLoop.add(source)
+        }
+        CGEvent.tapEnable(tap: tap, enable: true)
+        isRunning = true
     }
 
     private func stop() {
@@ -132,121 +142,22 @@ final class ScrollInverter: ObservableObject {
         tapCreationRetryWork = nil
         tapCreationRetryUsed = false
         MouseAppExceptions.shared.setSourceTracking(false, for: .scrollDirection)
-        let snapshot = lifecycleLock.withLock {
-            () -> (runLoop: CFRunLoop?, tap: CFMachPort?, threadExists: Bool, generation: UInt) in
-            shouldStopTapThread = true
-            pendingStartAfterStop = false
-            lifecycleGeneration &+= 1
-            return (tapRunLoop, tap, tapThread != nil, lifecycleGeneration)
-        }
-
-        if let tap = snapshot.tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-        }
-        if let runLoop = snapshot.runLoop {
-            CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) {
-                CFRunLoopStop(runLoop)
-            }
-            CFRunLoopWakeUp(runLoop)
-        } else if !snapshot.threadExists {
-            lifecycleLock.withLock {
-                shouldStopTapThread = false
-                tapThread = nil
-            }
-        }
-        publishRunning(false, generation: snapshot.generation)
-    }
-
-    private func runEventTap(generation: UInt) {
-        autoreleasepool {
-            let runLoop = CFRunLoopGetCurrent()
-            lifecycleLock.withLock {
-                tapRunLoop = runLoop
-            }
-
-            let shouldStopBeforeCreatingTap = lifecycleLock.withLock { shouldStopTapThread }
-            guard !shouldStopBeforeCreatingTap else {
-                let shouldRestart = clearEventTapThread()
-                if shouldRestart {
-                    start()
-                } else {
-                    publishRunning(false, generation: generation)
-                }
-                return
-            }
-
-            guard let tap = CGEvent.tapCreate(
-                tap: .cghidEventTap,
-                place: .tailAppendEventTap,
-                options: .defaultTap,
-                eventsOfInterest: CGEventMask(1 << CGEventType.scrollWheel.rawValue),
-                callback: { _, type, event, userInfo in
-                    guard let userInfo else { return Unmanaged.passUnretained(event) }
-                    let inverter = Unmanaged<ScrollInverter>.fromOpaque(userInfo).takeUnretainedValue()
-                    return inverter.handle(type: type, event: event)
-                },
-                userInfo: Unmanaged.passUnretained(self).toOpaque()
-            ) else {
-                _ = clearEventTapThread()
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    let isCurrent = self.lifecycleLock.withLock {
-                        generation == self.lifecycleGeneration
-                    }
-                    guard isCurrent else { return }
-                    MouseAppExceptions.shared.setSourceTracking(false, for: .scrollDirection)
-                }
-                publishRunning(false, generation: generation)
-                DispatchQueue.main.async { [weak self] in
-                    self?.scheduleTapCreationRetry()
-                }
-                return
-            }
-
-            tapCreationRetryUsed = false
-            tapCreationRetryWork?.cancel()
-            tapCreationRetryWork = nil
-            let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            lifecycleLock.withLock {
-                self.tap = tap
-                runLoopSource = source
-                tapTimeoutCount = 0
-                tapTimeoutWindowStart = 0
-            }
-            CFRunLoopAddSource(runLoop, source, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
-
-            let shouldStop = lifecycleLock.withLock { shouldStopTapThread }
-            if shouldStop {
-                CGEvent.tapEnable(tap: tap, enable: false)
-            } else {
-                publishRunning(true, generation: generation)
-                CFRunLoopRun()
-            }
-
-            CGEvent.tapEnable(tap: tap, enable: false)
-            CFMachPortInvalidate(tap)
-            CFRunLoopRemoveSource(runLoop, source, .commonModes)
-            let shouldRestart = clearEventTapThread()
-            if shouldRestart {
-                start()
-            } else {
-                publishRunning(false, generation: generation)
-            }
-        }
-    }
-
-    private func clearEventTapThread() -> Bool {
-        lifecycleLock.withLock {
-            let shouldRestart = pendingStartAfterStop
+        let (port, source) = tapStateLock.withLock { () -> (CFMachPort?, CFRunLoopSource?) in
+            let current = (tap, runLoopSource)
             tap = nil
             runLoopSource = nil
-            tapRunLoop = nil
-            tapThread = nil
-            shouldStopTapThread = false
-            pendingStartAfterStop = false
-            return shouldRestart
+            return current
         }
+        if let port {
+            CGEvent.tapEnable(tap: port, enable: false)
+        }
+        // Hand the tap back rather than only switching it off: a disabled tap
+        // keeps its place in the chain, and a session that is switched away
+        // has to stop being an event tap owner outright (issue #1075).
+        if let source {
+            PointerTapRunLoop.remove(source, invalidating: port)
+        }
+        isRunning = false
     }
 
     private func scheduleTapCreationRetry() {
@@ -260,22 +171,6 @@ final class ScrollInverter: ObservableObject {
         }
         tapCreationRetryWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
-    }
-
-    private func publishRunning(_ running: Bool, generation: UInt) {
-        let update = { [weak self] in
-            guard let self else { return }
-            let isCurrent = self.lifecycleLock.withLock {
-                generation == self.lifecycleGeneration
-            }
-            guard isCurrent else { return }
-            self.isRunning = running
-        }
-        if Thread.isMainThread {
-            update()
-        } else {
-            DispatchQueue.main.async(execute: update)
-        }
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -367,7 +262,7 @@ final class ScrollInverter: ObservableObject {
         }
 
         let now = ProcessInfo.processInfo.systemUptime
-        let decision = lifecycleLock.withLock { () -> (rearm: Bool, rebuild: Bool, tap: CFMachPort?) in
+        let decision = tapStateLock.withLock { () -> (rearm: Bool, rebuild: Bool, tap: CFMachPort?) in
             if tapTimeoutWindowStart == 0 || now - tapTimeoutWindowStart >= Self.tapTimeoutWindow {
                 tapTimeoutWindowStart = now
                 tapTimeoutCount = 0
@@ -386,8 +281,6 @@ final class ScrollInverter: ObservableObject {
                 self.syncWithPreferences()
             }
         } else if decision.rearm, SessionActivity.shared.isActive, let tap = decision.tap {
-            // Do not re-arm into a switched-away session: the stall is why the
-            // tap was disabled, and feeding it stalls the account on screen.
             CGEvent.tapEnable(tap: tap, enable: true)
         }
         return Unmanaged.passUnretained(event)

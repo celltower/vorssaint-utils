@@ -80,11 +80,16 @@ final class WindowLayoutService: ObservableObject {
     private let resizeGestureUpdateInterval: TimeInterval = 1.0 / 60.0
     private let edgeSnapSampleInterval: TimeInterval = 1.0 / 30.0
 
-    private init() {}
+    private init() {
+        SessionActivity.shared.onChange { [weak self] _ in self?.syncWithPreferences() }
+    }
 
     func syncWithPreferences() {
         let available = AppFeature.windowLayout.isAvailable
-        let trusted = AXIsProcessTrusted()
+        let trusted = SessionActivitySupport.tapShouldRun(
+            featureWanted: available,
+            accessibilityGranted: AXIsProcessTrusted(),
+            sessionIsActive: SessionActivity.shared.isActive)
         let wantsShortcuts = available
             && UserDefaults.standard.bool(forKey: DefaultsKey.windowLayoutShortcutsEnabled)
             && trusted
@@ -102,6 +107,7 @@ final class WindowLayoutService: ObservableObject {
 
         let wantsEdgeSnap = available
             && UserDefaults.standard.bool(forKey: DefaultsKey.windowEdgeSnapEnabled)
+            && !enabledEdgeSnapZones.isEmpty
             && !WindowEdgeSnapSupport.isSystemTilingEnabled
             && trusted
         wantsEdgeSnap ? startEdgeSnapTap() : stopEdgeSnapTap()
@@ -307,7 +313,14 @@ final class WindowLayoutService: ObservableObject {
         guard let onScreenWindowIDs = onScreenWindowIDs() else { return nil }
         for pid in pids {
             let isFocusedOwnApp = pid == ownPID && hasFocusedResizableOwnWindow
-            guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == pid }),
+            // One lookup by pid, not a fresh bridge of every running app on
+            // each turn of a list that can hold dozens of them. The edge-snap
+            // drag in this same file already resolves its app this way.
+            // isTerminated is explicit because runningApplications drops a dead
+            // pid on its own and NSRunningApplication(processIdentifier:) does
+            // not: it answers with a terminated instance.
+            guard let app = NSRunningApplication(processIdentifier: pid),
+                  !app.isTerminated,
                   isFocusedOwnApp
                     || (app.activationPolicy == .regular && !app.isHidden
                         && app.bundleIdentifier != ownBundleID)
@@ -572,7 +585,7 @@ final class WindowLayoutService: ObservableObject {
 
     private func shouldUseMaximizeFallback(for action: WindowLayoutAction) -> Bool {
         switch action {
-        case .leftHalf, .rightHalf, .topHalf, .bottomHalf,
+        case .leftHalf, .rightHalf, .topHalf, .bottomHalf, .centerHalf,
                 .leftThird, .centerThird, .rightThird, .leftTwoThirds, .rightTwoThirds,
                 .topLeftSixth, .topCenterSixth, .topRightSixth,
                 .bottomLeftSixth, .bottomCenterSixth, .bottomRightSixth,
@@ -1036,7 +1049,11 @@ final class WindowLayoutService: ObservableObject {
     private func observeEdgeSnapEvent(type: CGEventType,
                                       event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let edgeSnapTap { CGEvent.tapEnable(tap: edgeSnapTap, enable: true) }
+            if SessionActivity.shared.isActive, AXIsProcessTrusted(), let edgeSnapTap {
+                CGEvent.tapEnable(tap: edgeSnapTap, enable: true)
+            } else {
+                DispatchQueue.main.async { [weak self] in self?.syncWithPreferences() }
+            }
             DispatchQueue.main.async { [weak self] in self?.cancelEdgeSnapTracking() }
             return Unmanaged.passUnretained(event)
         }
@@ -1064,7 +1081,8 @@ final class WindowLayoutService: ObservableObject {
                drag.protectsSystemTopEdge {
                 event.location = WindowEdgeSnapSupport.locationAvoidingSystemTopDrag(
                     originalLocation,
-                    screenFrames: drag.quartzScreenFrames
+                    screenFrames: drag.quartzScreenFrames,
+                    enabledZones: drag.enabledZones
                 )
             }
         case .leftMouseUp:
@@ -1083,6 +1101,7 @@ final class WindowLayoutService: ObservableObject {
             edgeSnapSequenceSuppressed = false
             guard AppFeature.windowLayout.isAvailable,
                   UserDefaults.standard.bool(forKey: DefaultsKey.windowEdgeSnapEnabled),
+                  !enabledEdgeSnapZones.isEmpty,
                   !WindowEdgeSnapSupport.isSystemTilingEnabled,
                   AXIsProcessTrusted(),
                   !edgeSnapConflictsWithWindowGesture(flags: flags)
@@ -1222,6 +1241,7 @@ final class WindowLayoutService: ObservableObject {
                                   pointerStart: pointerStart,
                                   protectsSystemTopEdge: WindowEdgeSnapSupport.isSystemTopWindowOverviewDragEnabled,
                                   quartzScreenFrames: edgeSnapQuartzScreenFrames(),
+                                  enabledZones: enabledEdgeSnapZones,
                                   lastSampleAt: 0,
                                   mismatchCount: 0,
                                   isMoving: false,
@@ -1281,7 +1301,8 @@ final class WindowLayoutService: ObservableObject {
             WindowEdgeSnapScreen(frame: $0.frame, visibleFrame: $0.visibleFrame)
         }
         return WindowEdgeSnapSupport.target(at: appKitPoint,
-                                            screens: screens)
+                                            screens: screens,
+                                            enabledZones: enabledEdgeSnapZones)
     }
 
     private func edgeSnapQuartzScreenFrames() -> [CGRect] {
@@ -1298,6 +1319,7 @@ final class WindowLayoutService: ObservableObject {
                                target: WindowEdgeSnapTarget) {
         guard AppFeature.windowLayout.isAvailable,
               UserDefaults.standard.bool(forKey: DefaultsKey.windowEdgeSnapEnabled),
+              enabledEdgeSnapZones.contains(target.zone),
               !WindowEdgeSnapSupport.isSystemTilingEnabled,
               AXIsProcessTrusted(),
               canSetFrame(on: drag.window),
@@ -1329,6 +1351,12 @@ final class WindowLayoutService: ObservableObject {
         edgeSnapResolveAttempts = 0
         edgeSnapDrag = nil
         hideEdgeSnapPreview(immediately: false)
+    }
+
+    private var enabledEdgeSnapZones: Set<WindowEdgeSnapZone> {
+        WindowEdgeSnapZone.enabledZones(
+            from: UserDefaults.standard.string(forKey: DefaultsKey.windowEdgeSnapDisabledZones)
+        )
     }
 
     private func showEdgeSnapPreview(frame: CGRect) {
@@ -1482,7 +1510,11 @@ final class WindowLayoutService: ObservableObject {
 
         let tapDisabled = type == .tapDisabledByTimeout || type == .tapDisabledByUserInput
         if tapDisabled, let gestureTap {
-            CGEvent.tapEnable(tap: gestureTap, enable: true)
+            if SessionActivity.shared.isActive, AXIsProcessTrusted() {
+                CGEvent.tapEnable(tap: gestureTap, enable: true)
+            } else {
+                DispatchQueue.main.async { [weak self] in self?.syncWithPreferences() }
+            }
         }
 
         var chord: (button: WindowPointerGesture.Button, wantsResize: Bool)?
@@ -2311,6 +2343,7 @@ private struct WindowEdgeSnapDrag {
     let pointerStart: CGPoint
     let protectsSystemTopEdge: Bool
     let quartzScreenFrames: [CGRect]
+    let enabledZones: Set<WindowEdgeSnapZone>
     var lastSampleAt: TimeInterval
     var mismatchCount: Int
     var isMoving: Bool

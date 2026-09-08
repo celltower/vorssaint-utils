@@ -329,7 +329,15 @@ final class SmoothScrollService: ObservableObject {
               sourceProcessID != Self.ownProcessID else {
             return Unmanaged.passUnretained(event)
         }
-
+        // A stepped capture-loupe notch is a discrete command, so it must
+        // reach the overlay now rather than being expanded into a delayed
+        // glide. The opposite (fast) loupe mode intentionally keeps that
+        // glide, including when Option temporarily swaps the two modes.
+        if ScreenshotSelectionController.steppedLoupeNeedsRawWheel(
+            optionPressed: event.flags.contains(.maskAlternate)) {
+            stopGlideLocked()
+            return Unmanaged.passUnretained(event)
+        }
         let traits = ScrollWheelEventTraits(
             isContinuous: event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0,
             momentumPhase: event.getIntegerValueField(.scrollWheelEventMomentumPhase),

@@ -106,7 +106,7 @@ enum SmoothScrollSupport {
     static let defaultScrollAcceleration: Double = 0.0
 
     private static func rangeText(_ range: ClosedRange<Double>) -> String {
-        String(format: "%.2f – %.2f", range.lowerBound, range.upperBound)
+        String(format: "%.2f – %.2f", locale: MetricFormat.locale, range.lowerBound, range.upperBound)
     }
 
     /// Frame length for the glide timer. Sixty steps a second reads as
