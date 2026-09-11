@@ -3044,6 +3044,16 @@ struct MetricsTests {
             bundleIdentifier: "com.example.editor",
             subrole: "AXUnknown"),
                "App Switcher keeps undescribed windows from unrelated apps filtered")
+        for tags: UInt32 in [786946, 795138] {
+            expect(!SwitcherSupport.isSwitchableNonstandardWindow(
+                role: "AXWindow",
+                subrole: "AXUnknown",
+                fillsScreen: false,
+                hasNormalWindowLevel: true,
+                acceptsUndescribedSubroles: false,
+                isExcludedFromWindowCycle: SpaceHopSupport.isExcludedFromWindowCycle(windowTagsLow: tags)),
+                   "App Switcher excludes helper windows that opt out of window cycling")
+        }
         expect(SwitcherSupport.isSwitchableNonstandardWindow(
             role: "AXWindow",
             subrole: "AXUnknown",
@@ -3242,7 +3252,7 @@ struct MetricsTests {
             encoding: .utf8)) ?? ""
         let displayFilter = enumeratorCode.range(of: "SwitcherSupport.itemsOnDisplay(filtered,")
         let grouping = enumeratorCode.range(of: "SwitcherSupport.groupWindowsByApp(orderedPrimary)")
-        let entryCap = enumeratorCode.range(of: "ordered.prefix(maximumCount)")
+        let entryCap = enumeratorCode.range(of: "limit: maximumCount")
         expect(displayFilter != nil && grouping != nil && entryCap != nil
                && displayFilter!.lowerBound < grouping!.lowerBound
                && displayFilter!.lowerBound < entryCap!.lowerBound,
@@ -3251,7 +3261,7 @@ struct MetricsTests {
                                                  items: [onLeftDisplay, onRightDisplay])?.id == "left"
                && !localWindows.contains(where: { $0.id == "left" })
                && switcherCode.contains("items: sourceItems)")
-               && enumeratorCode.contains("sourceItems: sourceItems ?? result"),
+               && enumeratorCode.contains("sourceItems: sourceCandidates"),
                "activation retains the foreground window even when the displayed list excludes its monitor")
         let displaySnapshot = switcherSource.range(of: "let displayScope = currentDisplayScope")
         let enumerationDispatch = switcherSource.range(of: "enumerationQueue.async")
@@ -3378,6 +3388,134 @@ struct MetricsTests {
                     bundleIdentifier: nil,
                     appRules: ["com.example.notes": .hidden]),
                "only the hidden rule removes an identified app's real windows")
+
+        // MARK: The visible cap spends its slots across apps (issue #172)
+        expect(SwitcherSupport.visibleSelectionIndices(appPIDs: [7, 7, 9], limit: 5) == [0, 1, 2],
+               "a list that fits under the cap keeps every entry")
+        expect(SwitcherSupport.visibleSelectionIndices(appPIDs: [], limit: 5).isEmpty
+               && SwitcherSupport.visibleSelectionIndices(appPIDs: [7, 9], limit: 0).isEmpty,
+               "an empty list or a cap of nothing selects nothing")
+        // The shape that made whole applications disappear: one browser with
+        // many windows ahead of every other app in the use order.
+        let crowdedPIDs = Array(repeating: pid_t(101), count: 18) + [202, 303, 404, 505]
+        let crowdedSurvivors = SwitcherSupport.visibleSelectionIndices(appPIDs: crowdedPIDs, limit: 6)
+        expect(Set(crowdedSurvivors.map { crowdedPIDs[$0] }) == [101, 202, 303, 404, 505],
+               "an app with many windows never pushes another running app off the list")
+        expect(crowdedSurvivors.count == 6,
+               "the cap still spends every slot it has")
+        expect(crowdedSurvivors == crowdedSurvivors.sorted(),
+               "survivors keep the use order they came in, so the toggle target stays put")
+        expect(crowdedSurvivors.first == 0,
+               "the window the user is looking at stays first")
+        expect(crowdedSurvivors.filter { crowdedPIDs[$0] == 101 } == [0, 1],
+               "slots left over after every app is represented go to the most recent windows")
+        // More apps than slots: the apps compete with each other, in order.
+        let manyApps = (1...10).map { pid_t($0 * 11) }
+        expect(SwitcherSupport.visibleSelectionIndices(appPIDs: manyApps, limit: 4) == [0, 1, 2, 3],
+               "with more apps than slots the least recently used apps are the ones that drop")
+        // An app that appears again further down does not claim a second slot
+        // before an app that has none yet.
+        let interleaved: [pid_t] = [1, 2, 1, 3, 1, 4]
+        expect(SwitcherSupport.visibleSelectionIndices(appPIDs: interleaved, limit: 4) == [0, 1, 3, 5],
+               "each app is represented once before any app is represented twice")
+        // Dock previews and the preview refresh ask for one app's windows, where
+        // the selection has to stay exactly what it always was.
+        expect(SwitcherSupport.visibleSelectionIndices(appPIDs: Array(repeating: pid_t(7), count: 20),
+                                                       limit: 12) == Array(0..<12),
+               "a single app's own window list is capped from the front, as before")
+        // Review of #1473: with every slot claimed by an app of its own, the
+        // window before the current one must still be there, or a quick flick
+        // in the grid layout opens another app instead of returning to it.
+        let appsFillEverySlot: [pid_t] = [1, 1] + (2...60).map { pid_t($0) }
+        let fullListSurvivors = SwitcherSupport.visibleSelectionIndices(appPIDs: appsFillEverySlot, limit: 48)
+        expect(Array(fullListSurvivors.prefix(2)) == [0, 1],
+               "the window before the current one survives a list where every slot goes to an app")
+        expect(fullListSurvivors.count == 48 && fullListSurvivors == fullListSurvivors.sorted(),
+               "keeping the toggle target still spends the cap exactly and keeps the use order")
+        // Review of #1473: the window shortcut shows the front app alone, so
+        // other apps must not take places in its list. 24 recently used
+        // windows of that app ahead of 26 other apps used to keep all 24.
+        let frontAppWindows = (1...24).map { index in
+            SwitcherItem.window(id: CGWindowID(1000 + index), title: "w\(index)", appName: "Front",
+                                pid: 1, isOnScreen: true, frame: .zero)
+        }
+        let otherApps = (2...27).map { pid in
+            SwitcherItem.window(id: CGWindowID(2000 + pid), title: "o\(pid)", appName: "Other",
+                                pid: pid_t(pid), isOnScreen: true, frame: .zero)
+        }
+        let windowScopeItems = frontAppWindows + otherApps
+        let scopedSurvivors = SwitcherSupport.visibleSelectionIndices(items: windowScopeItems,
+                                                                      limit: 48, frontmostPID: 1)
+        expect(scopedSurvivors == Array(0..<24),
+               "the window shortcut keeps every window of the front app when other apps are running")
+        let unscopedSurvivors = SwitcherSupport.visibleSelectionIndices(items: windowScopeItems,
+                                                                        limit: 48, frontmostPID: nil)
+        expect(unscopedSurvivors.filter { windowScopeItems[$0].pid == 1 }.count < 24
+               && Set(unscopedSurvivors.map { windowScopeItems[$0].pid }).count == 27,
+               "the all-apps list still spreads its slots so every app stays reachable")
+        // The keyboard can belong to a helper process that renders the app's
+        // window; the scope resolves it to the app the same way the session does.
+        let helperOwned = SwitcherItem.window(id: 3001, title: "h", appName: "Front",
+                                              pid: 1, windowOwnerPID: 91, isOnScreen: true, frame: .zero)
+        let helperScoped = SwitcherSupport.visibleSelectionIndices(items: [helperOwned] + otherApps,
+                                                                   limit: 48, frontmostPID: 91)
+        expect(helperScoped == [0],
+               "a window-scoped list follows a helper-owned front window to its app")
+
+        // A newly focused window can still have an older rank while the focus
+        // watcher catches up. A current server order does not rewrite known history.
+        let previousFocusHistory = windowScopeItems.compactMap(\.windowID)
+        let currentFocusID = frontAppWindows.last!.windowID!
+        let currentServerOrder = [currentFocusID] + previousFocusHistory.filter { $0 != currentFocusID }
+        let reconciledFocusHistory = WindowUseOrder.reconciled(previousFocusHistory,
+            existing: Set(previousFocusHistory), frontToBack: currentServerOrder)
+        expect(reconciledFocusHistory == previousFocusHistory,
+               "a fresh server observation can coexist with the previous known focus history")
+        let unorderedFocusItems = Array(windowScopeItems.reversed())
+        let focusOrder = WindowUseOrder.order(
+            unorderedFocusItems.map { WindowUseOrder.Entry(windowID: $0.windowID, pid: $0.pid) },
+            windowHistory: reconciledFocusHistory, appHistory: (1...27).map { pid_t($0) },
+            frontToBack: currentServerOrder)
+        let focusCandidates = focusOrder.map { unorderedFocusItems[$0] }
+        let currentSource = SwitcherSupport.sessionSourceItem(frontmostPID: 1,
+            focusedWindowID: currentFocusID, items: focusCandidates)
+        let preparedFocusItems = SwitcherSupport.orderedForSession(focusCandidates, currentID: currentSource?.id)
+        let visibleFocusItems = SwitcherSupport.visibleSelectionIndices(
+            items: preparedFocusItems, limit: 48, frontmostPID: nil).map { preparedFocusItems[$0] }
+        expect(visibleFocusItems.first?.windowID == currentFocusID,
+               "a crowded list keeps the actual current window even when its history rank is old")
+        let quickFocusIndex = SwitcherSupport.initialSelectionPosition(pids: visibleFocusItems.map(\.pid),
+            hasForegroundEntry: currentSource != nil, frontmostPID: 1, reversed: false)
+        expect(visibleFocusItems[quickFocusIndex].windowID == previousFocusHistory.first,
+               "a fresh source reading preserves the previous-window target before the cap")
+        expect(visibleFocusItems.count == 48 && Set(visibleFocusItems.map(\.pid)).count == 27,
+               "retaining the actual source still shares the bounded list across other apps")
+        let scopedFocusItems = SwitcherSupport.visibleSelectionIndices(
+            items: preparedFocusItems, limit: 48, frontmostPID: 1).map { preparedFocusItems[$0] }
+        expect(scopedFocusItems.count == 24 && scopedFocusItems.first?.windowID == currentFocusID,
+               "source correction and the app's own window budget work together")
+        expect(SwitcherSupport.orderedForSession(focusCandidates, currentID: nil) == focusCandidates
+               && SwitcherSupport.orderedForSession(focusCandidates, currentID: "missing") == focusCandidates,
+               "an unavailable or removed source leaves the legitimate candidate order unchanged")
+        let focusSourceOnOtherDisplay = SwitcherSupport.sessionSourceItem(frontmostPID: onRightDisplay.pid,
+            focusedWindowID: onRightDisplay.windowID, items: [onRightDisplay, onLeftDisplay])
+        let displayFocusCandidates = SwitcherSupport.itemsOnDisplay([onRightDisplay, onLeftDisplay],
+            displayBounds: bothDisplays, targetIndex: 0)
+        expect(SwitcherSupport.orderedForSession(displayFocusCandidates,
+                                                currentID: focusSourceOnOtherDisplay?.id) == [onLeftDisplay],
+               "correcting the source never restores a window excluded by the display filter")
+        let groupedFocusItems = SwitcherSupport.expandGroupedWindows(
+            orderedWindows: focusCandidates, representatives: SwitcherSupport.groupWindowsByApp(focusCandidates))
+        expect(SwitcherSupport.needsFocusedWindowLookup(frontmostPID: 1, items: groupedFocusItems)
+               && SwitcherSupport.sessionSourceItem(frontmostPID: 1, focusedWindowID: currentFocusID,
+                                                     items: groupedFocusItems)?.windowID == currentFocusID,
+               "the grouped simple row keeps its backing windows available for actual focus resolution")
+        let sourceResolution = enumeratorCode.range(of: "resolveSource?(sourceCandidates)")
+        let sourcePromotion = enumeratorCode.range(of: "SwitcherSupport.orderedForSession(ordered, currentID: source?.id)")
+        expect(sourceResolution != nil && sourcePromotion != nil && entryCap != nil
+               && sourceResolution!.lowerBound < sourcePromotion!.lowerBound
+               && sourcePromotion!.lowerBound < entryCap!.lowerBound,
+               "the production enumeration resolves and promotes the current source before limiting entries")
 
         expect(WindowUseOrder.promoting(target: 7, previous: 3, in: [3, 5, 7]) == [7, 3, 5],
                "committing to a window puts it first and the one left behind second")
@@ -4011,6 +4149,44 @@ struct MetricsTests {
         expect(statusHitTestCode.contains(statusFrameCall) && statusHitTestCode.contains("return false"),
                "status-item hit testing rejects an untrustworthy frame")
 
+        // MARK: The panel surface reaches the popover arrow (issue #1030)
+
+        // AppKit hands the hosted panel a safe area for the popover's border and
+        // draws the arrow on the frame itself, so a surface that stopped at the
+        // panel would leave the tip in the plain system material. None of these
+        // owners compiles into this binary, so pin the three pieces that together
+        // carry the panel's own surface out to the tip.
+        let popoverSetUpCode = stripCommentLines((statusAnchorAppDelegateSource
+            .components(separatedBy: "private func setUpPopover() {").last ?? "")
+            .components(separatedBy: "\n    }").first ?? "")
+        expect(popoverSetUpCode.contains("popover.hasFullSizeContent = true"),
+               "the panel is hosted across the whole popover, arrow band included")
+        let panelThemeSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/UI/Theme.swift",
+            encoding: .utf8)) ?? ""
+        let panelGlassCode = stripCommentLines((panelThemeSource
+            .components(separatedBy: "private struct PanelGlassSurface: View {").last ?? "")
+            .components(separatedBy: "\n}").first ?? "")
+        expect(panelGlassCode.contains("surface.ignoresSafeArea()"),
+               "the panel surface paints past the safe area, up into the arrow")
+        expect(!panelGlassCode.isEmpty
+                   && !panelGlassCode.contains("RoundedRectangle")
+                   && !panelGlassCode.contains("cornerRadius"),
+               "the panel surface leaves the rounding to the popover balloon that clips it")
+        expect(panelGlassCode.contains(".glassEffect(.regular, in: Rectangle())")
+                   && panelGlassCode.contains("Rectangle()\n            .fill(.regularMaterial)"),
+               "both the standard and the Liquid Glass surface fill the whole balloon, no shape of their own")
+        let panelViewSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/UI/MenuPanel/MenuPanelView.swift",
+            encoding: .utf8)) ?? ""
+        let panelBodyCode: (String) -> String = { header in
+            stripCommentLines((panelViewSource.components(separatedBy: header).last ?? "")
+                .components(separatedBy: "\n    }").first ?? "")
+        }
+        expect(panelBodyCode("private var navigablePanel: some View {").contains(".panelGlassSurface()")
+                   && panelBodyCode("private var metricPanel: some View {").contains(".panelGlassSurface()"),
+               "both the navigable panel and the metric panel wear that surface")
+
         // The panel keeps its top edge and its center while its content resizes.
         let panelArea = CGRect(x: 0, y: 0, width: 1470, height: 932)
         let shortPanel = StatusItemAnchorSupport.pinnedPanelFrame(size: CGSize(width: 332, height: 375),
@@ -4226,6 +4402,28 @@ struct MetricsTests {
         expect(keyboardShortcutSettings.allSatisfy { key, value in
             (restoredKeyboardShortcuts?[key] as? NSObject) == (value as? NSObject)
         }, "keyboard brightness opt-in and custom shortcuts survive a settings backup")
+
+        for enabled in [false, true] {
+            let displayShortcutSettings: [String: Any] = [
+                DefaultsKey.brightnessControlEnabled: enabled,
+                DefaultsKey.brightnessKeysEnabled: enabled,
+                DefaultsKey.brightnessOSDEnabled: enabled,
+                DefaultsKey.displayBrightnessShortcutsEnabled: enabled,
+                DefaultsKey.displayBrightnessDecreaseShortcut: "control+command:27",
+                DefaultsKey.displayBrightnessIncreaseShortcut: "control+command:24",
+            ]
+            let backup = SettingsBackupSupport.payload(appVersion: "test") {
+                displayShortcutSettings[$0]
+            }
+            let data = try? JSONSerialization.data(withJSONObject: backup)
+            let decoded = data.flatMap {
+                (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any]
+            }
+            let restored = decoded.flatMap { SettingsBackupSupport.sanitizedSettings(from: $0) }
+            expect(displayShortcutSettings.allSatisfy { key, value in
+                (restored?[key] as? NSObject) == (value as? NSObject)
+            }, "display controls and custom brightness shortcuts survive JSON backup and restore, enabled=\(enabled)")
+        }
 
         expect(registeredDefaults[DefaultsKey.screenshotOpenEditorDirectly] as? Bool == false,
                "capture keeps showing the preview unless the user opts into the editor")
@@ -5424,6 +5622,13 @@ struct MetricsTests {
                && !CleanerPolicy.precheckCacheEntry("com.spotify.client")
                && !CleanerPolicy.precheckCacheEntry("ms-playwright"),
                "system, sensitive and unattributable caches start unchecked")
+        expect(CleanerPolicy.isExcludedCacheEntry("com.spotify.client")
+               && CleanerPolicy.isExcludedCacheEntry("COM.SPOTIFY.CLIENT")
+               && CleanerPolicy.isExcludedCacheEntry("com.spotify.client.helper"),
+               "caches holding installed customizations are excluded even when all caches are selected")
+        expect(!CleanerPolicy.isExcludedCacheEntry("com.vendor.editor")
+               && !CleanerPolicy.isExcludedCacheEntry("ms-playwright"),
+               "ordinary and downloadable sensitive caches remain available for review")
         expect(CleanerSupport.Category.deviceBackups.rawValue == 6
                && CleanerSupport.Category.allCases.count == 7,
                "device backups joined the cleaner with a stable category id")
@@ -5523,7 +5728,35 @@ struct MetricsTests {
         expect(registeredDefaults[DefaultsKey.mediaImageProfiles] as? String == "[]",
                "Media image profiles start empty")
         expect((registeredDefaults[DefaultsKey.autoQuitExceptions] as? [String]) == Defaults.mandatoryAutoQuitExceptionBundleIDs,
-               "Finder stays in the default auto-quit exception list")
+               "Finder and Phone stay in the default auto-quit exception list")
+        expect(Defaults.mandatoryAutoQuitExceptionBundleIDs.contains(Defaults.finderBundleIdentifier)
+                && Defaults.mandatoryAutoQuitExceptionBundleIDs.contains(Defaults.phoneBundleIdentifier),
+               "Quit on close never terminates Finder or Phone (Continuity calls)")
+        expect(Defaults.sanitizedAutoQuitExceptions([Defaults.finderBundleIdentifier])
+                .contains(Defaults.phoneBundleIdentifier),
+               "existing auto-quit exception lists gain Phone on sanitize")
+        expect(AutoQuitSupport.shouldDisplayException(
+            bundleID: Defaults.phoneBundleIdentifier, isInstalled: false) == false,
+               "Phone stays out of the exceptions UI when the app is not installed")
+        expect(AutoQuitSupport.shouldDisplayException(
+            bundleID: Defaults.phoneBundleIdentifier, isInstalled: true),
+               "Phone appears in the exceptions UI when the app is present")
+        expect(AutoQuitSupport.shouldDisplayException(
+            bundleID: Defaults.finderBundleIdentifier, isInstalled: true),
+               "Finder remains visible in the exceptions UI")
+        expect(AutoQuitSupport.visibleExceptions(
+            [Defaults.finderBundleIdentifier, Defaults.phoneBundleIdentifier, "com.example.app"],
+            isInstalled: { $0 != Defaults.phoneBundleIdentifier }
+        ) == [Defaults.finderBundleIdentifier, "com.example.app"],
+               "hiding Phone leaves other exceptions, including mandatory Finder, visible")
+        expect(Defaults.mandatoryAutoQuitExceptionBundleIDs.contains(Defaults.phoneBundleIdentifier),
+               "Phone remains a mandatory quit exception even when hidden from the UI")
+        let autoQuitSettingsSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/UI/Settings/AutoQuitSettings.swift",
+            encoding: .utf8)) ?? ""
+        expect(autoQuitSettingsSource.contains("AutoQuitSupport.visibleExceptions")
+                && autoQuitSettingsSource.contains("InstalledApps.url(for:"),
+               "the AutoQuit settings list filters exceptions through installation-aware visibility")
         expect(registeredDefaults[DefaultsKey.panelCollapsedSections] == nil,
                "panel collapsed sections intentionally has no registered default")
         expect(registeredDefaults[DefaultsKey.panelUtilityOrder] == nil,
@@ -5562,8 +5795,8 @@ struct MetricsTests {
                == ["com.example.One", "com.example.Two"],
                "bundle id lists are trimmed and deduplicated")
         expect(Defaults.sanitizedAutoQuitExceptions(["com.example.One", Defaults.finderBundleIdentifier])
-               == [Defaults.finderBundleIdentifier, "com.example.One"],
-               "Finder is mandatory in the auto-quit exception list")
+               == [Defaults.finderBundleIdentifier, Defaults.phoneBundleIdentifier, "com.example.One"],
+               "Finder and Phone are mandatory in the auto-quit exception list")
         expect(AutoQuitSupport.isExcepted(bundleIdentifier: "com.example.direct",
                                           bundleURL: nil,
                                           exceptions: ["com.example.direct"]),
@@ -12263,6 +12496,50 @@ struct MetricsTests {
                                                          targetStartedMinimized: false,
                                                          ownPID: 99),
                "App Switcher focus retries do not steal focus after the user moves to another app")
+        switcherFocusRetryChecks { expect($0, $1) }
+        // A window opened after the switch (Command-N in the app the switcher
+        // just raised) keeps the app frontmost, so the checks above cannot see
+        // it; the retry has to recognize the window itself.
+        expect(!SwitcherSupport.shouldContinueFocusRetry(targetPID: 10,
+                                                         sourcePID: 20,
+                                                         frontmostPID: 10,
+                                                         targetIsMinimized: false,
+                                                         targetStartedMinimized: false,
+                                                         knownWindowIDs: [101, 102],
+                                                         targetAppWindowIDs: [777],
+                                                         targetAppFocusedWindowID: 777,
+                                                         ownPID: 99),
+               "App Switcher focus retries let go of a window the app opened after the switch")
+        expect(SwitcherSupport.shouldContinueFocusRetry(targetPID: 10,
+                                                        sourcePID: 20,
+                                                        frontmostPID: 10,
+                                                        targetIsMinimized: false,
+                                                        targetStartedMinimized: false,
+                                                        knownWindowIDs: [101, 102],
+                                                        targetAppWindowIDs: [102],
+                                                        targetAppFocusedWindowID: 102,
+                                                        ownPID: 99),
+               "a window the app already had does not cancel the retry, so the pass still settles the target")
+        expect(SwitcherSupport.shouldContinueFocusRetry(targetPID: 10,
+                                                        sourcePID: 20,
+                                                        frontmostPID: 10,
+                                                        targetIsMinimized: false,
+                                                        targetStartedMinimized: false,
+                                                        knownWindowIDs: [101, 102],
+                                                        targetAppWindowIDs: [],
+                                                        targetAppFocusedWindowID: nil,
+                                                        ownPID: 99),
+               "an app with nothing on screen yet is the case the retry exists for, and still runs")
+        expect(SwitcherSupport.shouldContinueFocusRetry(targetPID: 10,
+                                                        sourcePID: 20,
+                                                        frontmostPID: 10,
+                                                        targetIsMinimized: false,
+                                                        targetStartedMinimized: false,
+                                                        knownWindowIDs: [],
+                                                        targetAppWindowIDs: [777],
+                                                        targetAppFocusedWindowID: 777,
+                                                        ownPID: 99),
+               "without a snapshot of the app's windows the retry behaves exactly as before")
         expect(!SwitcherSupport.shouldContinueFocusRetry(targetPID: 10,
                                                          sourcePID: 20,
                                                          frontmostPID: 30,
@@ -15472,6 +15749,36 @@ struct MetricsTests {
         expect(GlobalShortcutRole.availableRoles(isAvailable: { $0 != .switcher })
                 .allSatisfy { $0 != .switcher && $0 != .switcherWindow },
                "the shortcut editor lists installed roles even without reading enable keys")
+        for role in [GlobalShortcutRole.displayBrightnessDecrease, .displayBrightnessIncrease] {
+            expect(role.feature == .brightness && role.group == .energyDisplay,
+                   "display shortcuts appear with display controls")
+            for disabled in [DefaultsKey.brightnessControlEnabled, DefaultsKey.displayBrightnessShortcutsEnabled] {
+                expect(!GlobalShortcutRole.activeRoles(isOn: { $0 != disabled }).contains(role),
+                       "display shortcuts release their keys when either toggle is off")
+            }
+            expect(!GlobalShortcutRole.activeRoles(isOn: { _ in true },
+                        isAvailable: { $0 != .brightness }).contains(role),
+                   "display shortcuts follow feature availability")
+            expect((Defaults.registeredDefaults[role.storageKey] as? String)
+                    == role.defaultShortcut.storageValue,
+                   "display shortcut defaults match their registered preferences")
+        }
+        expect(BrightnessSupport.shortcutDisplay(followsPointer: true, pointerDisplay: 2,
+                   primaryDisplay: 1, eligible: [1, 2]) == 2,
+               "display shortcuts follow the pointer onto an external monitor")
+        expect(BrightnessSupport.shortcutDisplay(followsPointer: false, pointerDisplay: 2,
+                   primaryDisplay: 1, eligible: [1, 2]) == 1,
+               "display shortcuts use the primary display when pointer routing is off")
+        expect(BrightnessSupport.shortcutDisplay(followsPointer: true, pointerDisplay: 2,
+                   primaryDisplay: 1, eligible: [1]) == nil,
+               "an unavailable pointer target never changes a different display")
+        expect(BrightnessSupport.shortcutDisplay(followsPointer: true, pointerDisplay: nil,
+                   primaryDisplay: 1, eligible: [1]) == nil,
+               "a missing pointer target does not dim the primary display")
+        expect(BrightnessSupport.shortcutDisplay(followsPointer: false, pointerDisplay: 2,
+                   primaryDisplay: 1, eligible: [2]) == nil,
+               "an unavailable primary display never redirects the shortcut")
+
         expect(GlobalShortcutRole.keyboardBrightnessDecrease.feature == .brightness
                 && GlobalShortcutRole.keyboardBrightnessIncrease.feature == .brightness
                 && GlobalShortcutRole.keyboardBrightnessDecrease.group == .mouseKeyboard
@@ -18836,6 +19143,173 @@ struct MetricsTests {
                     orderRaw: selectWithoutShortcut.map(\.rawValue).joined(separator: ","),
                     enabled: true) == nil,
                "the visible shortcut menu assigns a numbered slot or removes a tool from 1 through 9")
+
+        // MARK: Assistive keyboard click recognition
+        assistiveKeyboardChecks { expect($0, $1) }
+
+        // MARK: Remappable screenshot tool shortcuts
+        screenshotToolShortcutChecks { expect($0, $1) }
+        do {
+            typealias Tool = ScreenshotSupport.Tool
+            let text = GlobalShortcut(keyCode: Int64(kVK_ANSI_T), modifiers: [])
+            let pen = GlobalShortcut(keyCode: Int64(kVK_ANSI_K), modifiers: [.control, .option, .command])
+            let one = GlobalShortcut(keyCode: Int64(kVK_ANSI_1), modifiers: [])
+            let raw = Tool.bindingsStorage([.text: text, .freehand: pen])
+            expect(Tool.bindings(from: raw) == [.text: text, .freehand: pen], "tool bindings round trip")
+            expect(raw == "text=:17,freehand=control+option+command:40", "tool binding storage has stable tool order")
+            expect(GlobalShortcut(storageValue: text.storageValue) == nil
+                && GlobalShortcut(storageValue: text.storageValue, requiringModifier: false) == text,
+                "bare editor keys do not weaken global shortcut validation")
+            expect(Tool.bindings(from: "unknown=:17,text=oops,rect=super:15,arrow=:999999").isEmpty
+                && Tool.bindings(from: "").isEmpty, "invalid imported tool bindings are discarded")
+            expect(Tool.bindings(from: "text=:17,text=:45")[.text]?.keyCode == Int64(kVK_ANSI_N),
+                   "the last valid binding for a duplicate tool wins")
+            expect(Tool.bindings(from: "text=:17,arrow=:17") == [.arrow: text],
+                   "duplicate imported shortcuts have one deterministic owner")
+            let commandKeys = [kVK_ANSI_C, kVK_ANSI_S, kVK_ANSI_Z, kVK_ANSI_P, kVK_ANSI_0,
+                               kVK_ANSI_1, kVK_ANSI_Equal, kVK_ANSI_Minus, kVK_Delete,
+                               kVK_ForwardDelete, kVK_ANSI_W, kVK_ANSI_Q]
+            for key in commandKeys {
+                for flags: GlobalShortcutModifiers in [.command, [.command, .shift], [.command, .option, .control]] {
+                    let reserved = GlobalShortcut(keyCode: Int64(key), modifiers: flags)
+                    expect(Tool.isReservedEditorKey(reserved)
+                        && Tool.bindings(from: "text=\(reserved.storageValue)").isEmpty,
+                        "editor and menu command \(reserved.storageValue) stays reserved on read")
+                }
+            }
+            for key in [kVK_Escape, kVK_Return, kVK_ANSI_KeypadEnter, kVK_Delete, kVK_ForwardDelete] {
+                expect(Tool.isReservedEditorKey(.init(keyCode: Int64(key), modifiers: []))
+                    && Tool.isReservedEditorKey(.init(keyCode: Int64(key), modifiers: .shift)),
+                    "bare and shifted editor action \(key) cannot be rebound")
+            }
+            expect(!Tool.isReservedEditorKey(text) && !Tool.isReservedEditorKey(pen), "custom tool keys are allowed")
+            func resolve(_ key: GlobalShortcut, number: Int? = nil, bindings: String? = raw,
+                         enabled: Bool = true) -> Tool? {
+                Tool.shortcutTool(keyCode: key.keyCode, modifiers: key.modifiers, number: number,
+                                  orderRaw: nil, bindingsRaw: bindings, enabled: enabled)
+            }
+            expect(resolve(text) == .text && resolve(pen) == .freehand, "bare and modified keys select their tools")
+            expect(resolve(text, enabled: false) == nil && resolve(one, number: 1, enabled: false) == nil,
+                   "disabling shortcuts gates both custom bindings and position digits")
+            expect(resolve(.init(keyCode: text.keyCode, modifiers: .shift)) == nil,
+                   "custom bindings require an exact modifier match")
+            expect(resolve(.init(keyCode: Int64(kVK_ANSI_5), modifiers: []), number: 5) == nil,
+                   "a rebound tool no longer answers to its old digit")
+            expect(resolve(.init(keyCode: Int64(kVK_ANSI_5), modifiers: []), number: 5,
+                           bindings: "text=command:8") == .text,
+                   "a rejected reserved binding falls back to the position digit")
+            // Every outside owner is injected: the real checks read defaults
+            // and the WindowServer, and the order is the point under test.
+            func rejection(_ key: GlobalShortcut, excluding tool: Tool = .arrow,
+                           role: GlobalShortcutRole? = nil, layout: String? = nil,
+                           system: Bool = false) -> Tool.BindingRejection? {
+                Tool.bindingRejection(for: key, excluding: tool, bindingsRaw: raw,
+                                      roleConflict: { _ in role },
+                                      windowLayoutConflict: { _ in layout },
+                                      systemConflict: { _ in system })
+            }
+            expect(rejection(text) == .tool(.text) && rejection(text, excluding: .text) == nil
+                && rejection(pen, excluding: .freehand) == nil,
+                   "a key bound to another tool is rejected and a tool's own key is not")
+            expect(rejection(pen, excluding: .freehand, role: .keepAwake) == .role(.keepAwake)
+                && rejection(pen, excluding: .freehand, layout: "Left") == .windowLayout("Left")
+                && rejection(pen, excluding: .freehand, system: true) == .system,
+                   "keys owned by an enabled feature, a window layout action or macOS are rejected before saving")
+            expect(rejection(.init(keyCode: Int64(kVK_Escape), modifiers: []), role: .keepAwake) == .reserved
+                && rejection(text, role: .keepAwake, system: true) == .tool(.text)
+                && rejection(pen, excluding: .freehand, role: .keepAwake, layout: "Left") == .role(.keepAwake)
+                && rejection(pen, excluding: .freehand, layout: "Left", system: true) == .windowLayout("Left"),
+                   "editor keys and tools answer first and the system table is read last")
+            for (index, tool) in Tool.allCases.enumerated() {
+                expect(Tool.shortcutTool(keyCode: -1, modifiers: [], number: index + 1,
+                        orderRaw: nil, bindingsRaw: "", enabled: true)
+                    == Tool.shortcutTool(number: index + 1, orderRaw: nil, enabled: true),
+                       "empty bindings preserve position behavior for \(tool)")
+                expect((Tool.shortcutLabel(for: tool, orderRaw: nil, bindingsRaw: "", enabled: true) != nil)
+                    == (index < Tool.shortcutLimit), "only the first nine tools get default badges")
+            }
+            expect(Tool.shortcutLabel(for: .text, orderRaw: nil, bindingsRaw: raw, enabled: true) == text.displayString
+                && Tool.shortcutLabel(for: .text, orderRaw: nil, bindingsRaw: raw, enabled: false) == nil,
+                   "a bound tool's badge shows its caps and disabling shortcuts hides every badge")
+            expect(resolve(.init(keyCode: Int64(kVK_ANSI_1), modifiers: .shift), number: 1, bindings: "") == .select,
+                   "AZERTY Shift plus a printed digit preserves the existing digit path")
+            let moved = Tool.assigningBinding(one, digit: 1, to: .text, orderRaw: nil, bindingsRaw: raw)
+            expect(Tool.ordered(from: moved.orderRaw).first == .text
+                && Tool.bindings(from: moved.bindingsRaw) == [.freehand: pen],
+                   "recording a digit moves the tool and clears its custom binding")
+            let cleared = Tool.assigningBinding(nil, to: .text, orderRaw: nil, bindingsRaw: raw)
+            expect(Tool.ordered(from: cleared.orderRaw).firstIndex(of: .text) == Tool.shortcutLimit
+                && Tool.shortcutLabel(for: .text, orderRaw: cleared.orderRaw,
+                    bindingsRaw: cleared.bindingsRaw, enabled: true) == nil,
+                   "Delete clears the binding and moves the tool outside the numbered slots")
+            let rebound = Tool.assigningBinding(text, to: .text, orderRaw: "crop,text", bindingsRaw: "")
+            expect(Tool.ordered(from: rebound.orderRaw).prefix(2) == [.crop, .text]
+                && Tool.bindings(from: rebound.bindingsRaw)[.text] == text, "custom recording preserves rail order")
+            expect(Defaults.registeredDefaults[DefaultsKey.screenshotToolShortcuts] as? String == ""
+                && SettingsBackupSupport.exportKeys().contains(DefaultsKey.screenshotToolShortcuts),
+                   "empty tool bindings are registered and included in settings backups")
+            // What a key "is" comes from what it types on the active layout,
+            // so these pin the layout instead of trusting the test machine's.
+            if let usData = testLayoutData(for: "com.apple.keylayout.US") {
+                GlobalShortcut.refreshLayoutLabels(layoutData: usData)
+                let shiftedOne = GlobalShortcut(keyCode: Int64(kVK_ANSI_1), modifiers: .shift)
+                expect(Tool.shortcutDigit(one) == 1
+                    && Tool.shortcutDigit(.init(keyCode: Int64(kVK_ANSI_Keypad1), modifiers: [])) == 1
+                    && Tool.shortcutDigit(shiftedOne) == nil
+                    && Tool.shortcutDigit(.init(keyCode: Int64(kVK_ANSI_1), modifiers: .command)) == nil
+                    && Tool.shortcutDigit(.init(keyCode: Int64(kVK_ANSI_0), modifiers: [])) == nil
+                    && Tool.shortcutDigit(text) == nil,
+                       "on US a bare or keypad digit names a slot; ⇧1 types !, and ⌘1, 0 and letters do not")
+                expect(Tool.bindings(from: "text=\(one.storageValue)")[.text] == one
+                    && Tool.activeBindings(from: "text=\(one.storageValue)").isEmpty
+                    && resolve(one, number: 1, bindings: "text=\(one.storageValue)") == .select
+                    && Tool.bindings(from: Tool.bindingsStorage([.text: shiftedOne]))[.text] == shiftedOne,
+                       "a saved binding on a digit key is suspended so the digit keeps its slot, ⇧1 stays a key")
+            }
+            if let frenchData = testLayoutData(for: "com.apple.keylayout.French") {
+                GlobalShortcut.refreshLayoutLabels(layoutData: frenchData)
+                let shiftedOne = GlobalShortcut(keyCode: Int64(kVK_ANSI_1), modifiers: .shift)
+                expect(GlobalShortcut.layoutKeyLabel(for: one.keyCode, usesCommand: false) == "&"
+                    && GlobalShortcut.layoutKeyLabel(for: one.keyCode, usesCommand: false, usesShift: true) == "1"
+                    && Tool.shortcutDigit(shiftedOne) == 1 && Tool.shortcutDigit(one) == nil,
+                       "AZERTY reads 1 from Shift on the & key and leaves bare & as a key")
+                let ampersand = Tool.bindingsStorage([.text: one])
+                expect(Tool.bindings(from: ampersand)[.text] == one
+                    && Tool.activeBindings(from: Tool.bindingsStorage([.text: shiftedOne])).isEmpty
+                    && Tool.bindingRejection(for: one, excluding: .text, bindingsRaw: "",
+                                             roleConflict: { _ in nil }, windowLayoutConflict: { _ in nil },
+                                             systemConflict: { _ in false }) == nil,
+                       "AZERTY records & as a binding with no conflict against 1, and ⇧& is a slot, not a binding")
+                let movedFrench = Tool.assigningBinding(shiftedOne, digit: Tool.shortcutDigit(shiftedOne),
+                                                        to: .text, orderRaw: nil, bindingsRaw: ampersand)
+                expect(Tool.ordered(from: movedFrench.orderRaw).first == .text
+                    && Tool.bindings(from: movedFrench.bindingsRaw).isEmpty
+                    && Tool.shortcutTool(keyCode: shiftedOne.keyCode, modifiers: shiftedOne.modifiers, number: 1,
+                                         orderRaw: movedFrench.orderRaw, bindingsRaw: movedFrench.bindingsRaw,
+                                         enabled: true) == .text,
+                       "AZERTY Shift+& moves the tool into slot 1 instead of saving ⇧&, and then selects it")
+            }
+            for layoutID in ["com.apple.keylayout.French", "com.apple.keylayout.Russian"] {
+                if let data = testLayoutData(for: layoutID) {
+                    GlobalShortcut.refreshLayoutLabels(layoutData: data)
+                    let key = GlobalShortcut(keyCode: Int64(kVK_ANSI_Q), modifiers: [])
+                    let binding = Tool.bindingsStorage([.text: key])
+                    expect(key.displayString == (layoutID.hasSuffix("French") ? "A" : "Й")
+                        && resolve(key, bindings: binding) == .text,
+                           "custom tool keys route and label correctly for \(layoutID)")
+                }
+            }
+            GlobalShortcut.refreshLayoutLabels()
+            let suite = "com.vorssaint.tests.editor-bindings.\(UUID().uuidString)"
+            let prefs = UserDefaults(suiteName: suite)!
+            defer { prefs.removePersistentDomain(forName: suite) }
+            prefs.set(false, forKey: DefaultsKey.screenshotToolShortcutsEnabled)
+            prefs.register(defaults: Defaults.registeredDefaults)
+            prefs.set(raw, forKey: DefaultsKey.screenshotToolShortcuts)
+            expect(!prefs.bool(forKey: DefaultsKey.screenshotToolShortcutsEnabled)
+                && Tool.bindings(from: prefs.string(forKey: DefaultsKey.screenshotToolShortcuts))[.text] == text,
+                   "registering and saving bindings preserves an existing disabled preference")
+        }
 
         expect(ScreenshotSupport.cropLoupeSampleRect(
             around: CGPoint(x: 50, y: 40),
@@ -26472,6 +26946,120 @@ struct MetricsTests {
             failures.forEach { print("  - \($0)") }
             exit(1)
         }
+    }
+
+    private static func switcherFocusRetryChecks(_ expect: (Bool, String) -> Void) {
+        func window(_ id: CGWindowID, pid: pid_t = 10, layer: Int = 0,
+                    onscreen: Bool = true, alpha: Double = 1) -> [String: Any] {
+            [kCGWindowNumber as String: NSNumber(value: id),
+             kCGWindowOwnerPID as String: NSNumber(value: pid),
+             kCGWindowLayer as String: NSNumber(value: layer),
+             kCGWindowIsOnscreen as String: NSNumber(value: onscreen),
+             kCGWindowAlpha as String: NSNumber(value: alpha)]
+        }
+        let snapshot = SwitcherSupport.focusRetryWindowIDs(in: [
+            window(101), window(102, onscreen: false), window(103, layer: 8),
+            window(104, alpha: 0), window(101), window(900, pid: 20),
+            [kCGWindowOwnerPID as String: NSNumber(value: 10)],
+            [kCGWindowNumber as String: NSNumber(value: 901)]
+        ], ownerPID: 10)
+        expect(snapshot == [101, 102, 103, 104],
+               "focus snapshots retain offscreen and auxiliary identities without mixing owners")
+
+        let cases: [(String, pid_t?, Set<CGWindowID>, CGWindowID?, Set<CGWindowID>, Bool, Int, Int)] = [
+            ("new keyboard window cancels", 10, [101, 500], 500, snapshot, false, 1, 1),
+            ("new transparent helper leaves existing keyboard focus alone", 10, [101, 500], 101, snapshot, true, 1, 1),
+            ("new helper cannot hide a new focused window behind it", 10, [101, 500, 501], 501, snapshot, false, 1, 1),
+            ("existing dialog remains eligible", 10, [103], 103, snapshot, true, 1, 0),
+            ("restored offscreen window remains eligible", 10, [102], 102, snapshot, true, 1, 0),
+            ("unavailable focus does not treat an auxiliary surface as user intent", 10, [500], nil, snapshot, true, 1, 1),
+            ("unavailable window list preserves existing behavior", 10, [], 500, snapshot, true, 1, 0),
+            ("unavailable initial snapshot makes no later queries", 10, [500], 500, [], true, 0, 0),
+            ("source handoff ignores windows created in the background", 20, [500], 500, snapshot, true, 0, 0),
+            ("own app handoff makes no window queries", 99, [500], 500, snapshot, true, 0, 0),
+            ("unrelated app cancels before window queries", 30, [500], 500, snapshot, false, 0, 0),
+            ("unknown foreground does not infer a new user action", nil, [500], 500, snapshot, true, 0, 0)
+        ]
+        for (label, frontmost, visible, focused, known, expected, expectedWindowReads, expectedFocusReads) in cases {
+            var windowReads = 0
+            var focusReads = 0
+            func readWindows() -> Set<CGWindowID> { windowReads += 1; return visible }
+            func readFocus() -> CGWindowID? { focusReads += 1; return focused }
+            let actual = SwitcherSupport.shouldContinueFocusRetry(
+                targetPID: 10, sourcePID: 20, frontmostPID: frontmost,
+                targetIsMinimized: false, targetStartedMinimized: false,
+                knownWindowIDs: known, targetAppWindowIDs: readWindows(),
+                targetAppFocusedWindowID: readFocus(), ownPID: 99)
+            expect(actual == expected, "focus retry: " + label)
+            expect(windowReads == expectedWindowReads && focusReads == expectedFocusReads,
+                   "focus retry bounds its queries: " + label)
+        }
+
+        let helper = window(500, alpha: 0)
+        let withHelper = SwitcherSupport.focusRetryWindowIDs(in: [helper, window(101)], ownerPID: 10)
+        let state = SwitcherWindowFocusRetryState(targetWindowID: 101,
+                                                  targetStartedMinimized: false,
+                                                  knownWindowIDs: snapshot)
+        expect(state.shouldContinue(targetPID: 10, sourcePID: 20, frontmostPID: 10,
+                                    targetMinimizedState: false, targetAppWindowIDs: withHelper,
+                                    targetAppFocusedWindowID: 101, ownPID: 99),
+               "a transparent helper does not cancel the fullscreen focus chain")
+        expect(!state.shouldContinue(targetPID: 10, sourcePID: 20, frontmostPID: 10,
+                                     targetMinimizedState: false, targetAppWindowIDs: [500],
+                                     targetAppFocusedWindowID: 500, ownPID: 99),
+               "a new focused window cancels the remaining fullscreen passes")
+        var lateReads = 0
+        func lateWindows() -> Set<CGWindowID> { lateReads += 1; return [102] }
+        func lateFocus() -> CGWindowID? { lateReads += 1; return 102 }
+        expect(!state.shouldContinue(targetPID: 10, sourcePID: 20, frontmostPID: 10,
+                                     targetMinimizedState: false, targetAppWindowIDs: lateWindows(),
+                                     targetAppFocusedWindowID: lateFocus(), ownPID: 99),
+               "a later pass cannot reclaim focus after the new window closes")
+        expect(lateReads == 0, "a cancelled focus chain performs no later window queries")
+
+        for destination in [20, 30, 99, nil] as [pid_t?] {
+            for focusResult in [101, nil] as [CGWindowID?] {
+                var foreground: pid_t? = 10
+                func focusAfterSwitchingAway() -> CGWindowID? {
+                    foreground = destination
+                    return focusResult
+                }
+                let pending = SwitcherWindowFocusRetryState(targetWindowID: 101,
+                                                            targetStartedMinimized: false,
+                                                            knownWindowIDs: snapshot)
+                expect(!pending.shouldContinue(targetPID: 10, sourcePID: 20, frontmostPID: foreground,
+                                                targetMinimizedState: false, targetAppWindowIDs: [500],
+                                                targetAppFocusedWindowID: focusAfterSwitchingAway(), ownPID: 99),
+                       "a slow focus query cannot reclaim the app after the user leaves it")
+            }
+        }
+
+        let partial = SwitcherWindowFocusRetryState(targetWindowID: 101,
+                                                    targetStartedMinimized: false,
+                                                    knownWindowIDs: [102])
+        expect(partial.shouldContinue(targetPID: 10, sourcePID: 20, frontmostPID: 10,
+                                      targetMinimizedState: false, targetAppWindowIDs: [101],
+                                      targetAppFocusedWindowID: 101, ownPID: 99),
+               "the selected target is not new when a partial snapshot missed it")
+        let minimized = SwitcherWindowFocusRetryState(targetWindowID: 101,
+                                                      targetStartedMinimized: true,
+                                                      knownWindowIDs: snapshot)
+        expect(minimized.shouldContinue(targetPID: 10, sourcePID: 20, frontmostPID: 20,
+                                        targetMinimizedState: true, targetAppWindowIDs: [],
+                                        targetAppFocusedWindowID: nil, ownPID: 99),
+               "a minimized target can finish its first restoration")
+        expect(minimized.shouldContinue(targetPID: 10, sourcePID: 20, frontmostPID: 10,
+                                        targetMinimizedState: false, targetAppWindowIDs: [101],
+                                        targetAppFocusedWindowID: 101, ownPID: 99),
+               "the focus chain observes successful restoration")
+        expect(!minimized.shouldContinue(targetPID: 10, sourcePID: 20, frontmostPID: 10,
+                                         targetMinimizedState: true, targetAppWindowIDs: [101],
+                                         targetAppFocusedWindowID: 101, ownPID: 99),
+               "minimizing the restored target cancels remaining passes")
+        expect(!minimized.shouldContinue(targetPID: 10, sourcePID: 20, frontmostPID: 10,
+                                         targetMinimizedState: false, targetAppWindowIDs: [101],
+                                         targetAppFocusedWindowID: 101, ownPID: 99),
+               "later restoration cannot restart a cancelled focus chain")
     }
 
     private static func scratchpadStoreChecks(_ expect: (Bool, String) -> Void) {

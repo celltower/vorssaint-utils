@@ -48,10 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         }
         beginStartupWatch()
         Self.boundAccessibilityWaits()
-        // Resolve the Accessibility Keyboard's pid now. The lookup is async, so
-        // a feature that asks first and has no second chance — the switcher
-        // judges a click only after cancelSession() has already run — would
-        // otherwise be told "not running" once per launch.
+        // Pay the first AppKit process lookup before an input callback needs
+        // it. Each click still resolves the current process independently.
         _ = AssistiveKeyboard.isRunning
 
         // Finish the on-disk rename for installs carried over from a pre-2.5
@@ -365,6 +363,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         // We animate the underlying popover window ourselves so applicationDefined
         // dismissal, right-click menus and live Settings previews stay predictable.
         popover.animates = false
+        // The panel paints its own glass surface, or the arrow tip would show plain
+        // system material where the surface stops, the seam users see. The visible
+        // content stays inset either way, before through the content view's frame
+        // and now through the safe area the popover publishes, so only the surface
+        // reaches the arrow.
+        popover.hasFullSizeContent = true
         popover.delegate = self
         let host = NSHostingController(rootView: MenuPanelView())
         host.sizingOptions = .preferredContentSize
