@@ -573,6 +573,25 @@ enum PointerInputFeatureTests {
         suite.expect(SmoothScrollSupport.sanitizedResponse(-1) == SmoothScrollSupport.responseRange.lowerBound
                 && SmoothScrollSupport.sanitizedResponse(500) == SmoothScrollSupport.responseRange.upperBound,
                "response clamps damaged preferences to its range")
+        suite.expect(SmoothScrollSupport.defaultCoast == 0,
+               "coast ships off so every upgrade keeps the exact shipped curve")
+        suite.expect(SmoothScrollSupport.sanitizedCoast(-1) == SmoothScrollSupport.coastRange.lowerBound
+                && SmoothScrollSupport.sanitizedCoast(500) == SmoothScrollSupport.coastRange.upperBound,
+               "coast clamps damaged preferences to its range")
+        suite.expect(SmoothScrollSupport.frameDelta(
+            remaining: 100,
+            elapsed: SmoothScrollSupport.frameInterval,
+            response: SmoothScrollSupport.defaultResponse,
+            coast: SmoothScrollSupport.defaultCoast
+        ) == defaultFrameDelta,
+               "zero coast emits exactly the shipped first frame")
+        suite.expect(SmoothScrollSupport.frameDelta(
+            remaining: 100,
+            elapsed: SmoothScrollSupport.frameInterval,
+            response: SmoothScrollSupport.defaultResponse,
+            coast: SmoothScrollSupport.coastRange.upperBound
+        ) < defaultFrameDelta,
+               "full coast stretches the same distance over more frames")
         suite.expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollEnabled] as? Bool == false,
                "smooth scrolling ships off by default")
         suite.expect(Defaults.registeredDefaults[DefaultsKey.scrollInverterHorizontalEnabled] as? Bool == false,
@@ -585,6 +604,10 @@ enum PointerInputFeatureTests {
                 == SmoothScrollSupport.defaultResponse
                 && SettingsBackupSupport.exportKeys().contains(DefaultsKey.smoothScrollResponse),
                "smooth scrolling response registers its default and follows settings backups")
+        suite.expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollCoast] as? Int
+                == SmoothScrollSupport.defaultCoast
+                && SettingsBackupSupport.exportKeys().contains(DefaultsKey.smoothScrollCoast),
+               "smooth scrolling coast registers its default and follows settings backups")
 
         var sixtyHertzEngine = SmoothScrollSupport.Engine()
         var oneTwentyHertzEngine = SmoothScrollSupport.Engine()
@@ -617,6 +640,45 @@ enum PointerInputFeatureTests {
                 && abs(sixtyHertzEngine.remainingVertical - oneTwentyHertzEngine.remainingVertical) < 0.000001
                 && abs(sixtyHertzEngine.remainingHorizontal - oneTwentyHertzEngine.remainingHorizontal) < 0.000001,
                "equal elapsed time produces the same glide at 60 and 120 Hz")
+
+        // Full coast still travels every pixel the wheel asked for, on either
+        // cadence: the curve only stretches the response time.
+        var coastSixtyHertzEngine = SmoothScrollSupport.Engine()
+        var coastOneTwentyHertzEngine = SmoothScrollSupport.Engine()
+        coastSixtyHertzEngine.add(vertical: 80, horizontal: -80)
+        coastOneTwentyHertzEngine.add(vertical: 80, horizontal: -80)
+        var coastSixtyHertzTravelled = SmoothScrollSupport.Axes(vertical: 0, horizontal: 0)
+        var coastOneTwentyHertzTravelled = SmoothScrollSupport.Axes(vertical: 0, horizontal: 0)
+        for _ in 0..<600 {
+            let frame = coastSixtyHertzEngine.advance(
+                elapsed: 1.0 / 60.0,
+                response: SmoothScrollSupport.defaultResponse,
+                coast: SmoothScrollSupport.coastRange.upperBound
+            )
+            coastSixtyHertzTravelled = SmoothScrollSupport.Axes(
+                vertical: coastSixtyHertzTravelled.vertical + frame.vertical,
+                horizontal: coastSixtyHertzTravelled.horizontal + frame.horizontal
+            )
+            if frame.finished { break }
+        }
+        for _ in 0..<1200 {
+            let frame = coastOneTwentyHertzEngine.advance(
+                elapsed: 1.0 / 120.0,
+                response: SmoothScrollSupport.defaultResponse,
+                coast: SmoothScrollSupport.coastRange.upperBound
+            )
+            coastOneTwentyHertzTravelled = SmoothScrollSupport.Axes(
+                vertical: coastOneTwentyHertzTravelled.vertical + frame.vertical,
+                horizontal: coastOneTwentyHertzTravelled.horizontal + frame.horizontal
+            )
+            if frame.finished { break }
+        }
+        suite.expect(!coastSixtyHertzEngine.isActive && !coastOneTwentyHertzEngine.isActive
+                && abs(coastSixtyHertzTravelled.vertical - 80) < 0.001
+                && abs(coastSixtyHertzTravelled.horizontal + 80) < 0.001
+                && abs(coastOneTwentyHertzTravelled.vertical - 80) < 0.001
+                && abs(coastOneTwentyHertzTravelled.horizontal + 80) < 0.001,
+               "a full-coast glide lands on the full wheel distance at 60 and 120 Hz")
 
         suite.expect(FocusFollowsMouseSupport.sanitizedDelay(0)
                 == FocusFollowsMouseSupport.delayRange.lowerBound
