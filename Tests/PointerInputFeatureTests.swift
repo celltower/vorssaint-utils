@@ -585,13 +585,52 @@ enum PointerInputFeatureTests {
             coast: SmoothScrollSupport.defaultCoast
         ) == defaultFrameDelta,
                "zero coast emits exactly the shipped first frame")
-        suite.expect(SmoothScrollSupport.frameDelta(
-            remaining: 100,
-            elapsed: SmoothScrollSupport.frameInterval,
-            response: SmoothScrollSupport.defaultResponse,
-            coast: SmoothScrollSupport.coastRange.upperBound
-        ) < defaultFrameDelta,
-               "full coast stretches the same distance over more frames")
+        // Coast must slow only the landing. A notch glided at zero coast has
+        // to match the shipped engine frame for frame, and at full coast the
+        // first frame must stay the shipped one while the glide lasts longer.
+        func notchFrames(coast: Int?) -> [Double] {
+            var engine = SmoothScrollSupport.Engine()
+            engine.add(vertical: 40, horizontal: 0)
+            var frames: [Double] = []
+            while engine.isActive && frames.count < 600 {
+                let frame = coast.map {
+                    engine.advance(elapsed: SmoothScrollSupport.frameInterval,
+                                   response: SmoothScrollSupport.defaultResponse, coast: $0)
+                } ?? engine.advance(elapsed: SmoothScrollSupport.frameInterval,
+                                    response: SmoothScrollSupport.defaultResponse)
+                frames.append(frame.vertical)
+            }
+            return frames
+        }
+        let shippedNotch = notchFrames(coast: nil)
+        let fullCoastNotch = notchFrames(coast: SmoothScrollSupport.coastRange.upperBound)
+        suite.expect(notchFrames(coast: SmoothScrollSupport.defaultCoast) == shippedNotch,
+               "zero coast glides a notch exactly like the shipped engine")
+        suite.expect(fullCoastNotch.first == shippedNotch.first
+                && fullCoastNotch.count >= shippedNotch.count * 3 / 2
+                && abs(fullCoastNotch.reduce(0, +) - 40) < 0.000001,
+               "full coast keeps the first frame and lands the same notch later")
+        // The landing slows gradually rather than dropping to a flat crawl.
+        suite.expect(zip(fullCoastNotch.dropLast(), fullCoastNotch.dropFirst().dropLast())
+                .allSatisfy { $0 >= $1 - 0.000001 },
+               "full coast never speeds back up before the glide lands")
+        var reboundEngine = SmoothScrollSupport.Engine()
+        reboundEngine.add(vertical: 40, horizontal: 0)
+        for _ in 0..<10 {
+            _ = reboundEngine.advance(elapsed: SmoothScrollSupport.frameInterval,
+                                      response: SmoothScrollSupport.defaultResponse,
+                                      coast: SmoothScrollSupport.coastRange.upperBound)
+        }
+        let remainingBeforeTick = reboundEngine.remainingVertical
+        reboundEngine.add(vertical: 40, horizontal: 0)
+        let freshTick = reboundEngine.advance(elapsed: SmoothScrollSupport.frameInterval,
+                                              response: SmoothScrollSupport.defaultResponse,
+                                              coast: SmoothScrollSupport.coastRange.upperBound)
+        suite.expect(abs(freshTick.vertical - SmoothScrollSupport.frameDelta(
+                    remaining: remainingBeforeTick + 40,
+                    elapsed: SmoothScrollSupport.frameInterval,
+                    response: SmoothScrollSupport.defaultResponse)) < 0.000001,
+               "a tick during a coasting landing answers at the shipped pace again")
         suite.expect(Defaults.registeredDefaults[DefaultsKey.smoothScrollEnabled] as? Bool == false,
                "smooth scrolling ships off by default")
         suite.expect(Defaults.registeredDefaults[DefaultsKey.scrollInverterHorizontalEnabled] as? Bool == false,
